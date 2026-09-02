@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "db:push": "drizzle-kit push",
     "db:init": "tsx init-data.ts",
+    "db:seed": "tsx scripts/seed-demo-data.ts",
     "setup": "bash scripts/setup-local.sh",
     "lint": "tsc --noEmit",
     "type-check": "tsc --noEmit"
