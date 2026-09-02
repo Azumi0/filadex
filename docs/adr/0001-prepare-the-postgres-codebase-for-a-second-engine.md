@@ -39,12 +39,20 @@ The one place this constraint was strained is recorded honestly under
 
 Stage 2's cost is now concentrated rather than spread. Specifically:
 
-- **Every database call goes through one interface**, and `server/db.ts` is
-  imported by exactly one file. A dialect switch has one place to happen.
+- **Every database call in the application goes through one interface**, and
+  `server/db.ts` is imported by exactly one application file. A dialect switch
+  has one place to happen. The standalone scripts are a separate class of
+  caller and open the connection themselves — `scripts/migrate.ts`,
+  `scripts/seed-demo-data.ts` and `init-data.ts` import it too — but none of
+  them is the running server.
 - **The SQL that engines disagree about is enumerable.** Case-insensitive
   matching is two functions in `server/db/predicates.ts`; the only `TRUNCATE`
-  and the only explicit transaction are one method in `server/storage.ts`. There
-  is no other raw SQL in the application.
+  and the only explicit transaction are one method in `server/storage.ts`. The
+  only raw SQL left elsewhere is `shared/schema.ts`'s `lower()` index
+  expression and the `CREATE TABLE` fallback block in `init-data.ts` — which
+  is not part of the server either, but is built into the image
+  (`Dockerfile:55`) and exposed as `npm run db:init`, so it is a second place
+  that will need the dialect.
 - **The schema is written in a vocabulary that can be spelled per dialect**,
   from a single set of table definitions.
 - **There is a test suite**, and it runs against a real database chosen by a URL
@@ -57,7 +65,7 @@ Stage 2's cost is now concentrated rather than spread. Specifically:
 
 ### Tests run against a real database, never a fake
 
-The suite (242 tests) runs against a real Postgres server. There is no
+The suite (243 tests) runs against a real Postgres server. There is no
 in-memory substitute and no stubbed query layer.
 
 `TEST_DATABASE_URL` selects the server; with it unset, a throwaway
@@ -102,11 +110,29 @@ and it was deliberately made *after* the tests existed, so the evidence was
 available: the tests need real SQL semantics, so an in-memory adapter could not
 have run them. Deleted.
 
+### The dead session-authentication dependencies go too
+
+`passport`, `passport-local`, `express-session`, `memorystore` and
+`connect-pg-simple`, with their `@types`, were installed and referenced nowhere
+outside `package.json`. They belong to a session-store login this application
+does not have: authentication is a signed JWT in a cookie (`server/auth.ts`),
+and one of them — `connect-pg-simple` — would have been a second, invisible
+consumer of Postgres to account for in stage 2 had anything actually used it.
+
+This is the one commit here that is not about the database, and it is included
+on the same terms as everything else: the claim is "nothing imports this", and
+that is a question with an answer. They were already dead before this branch
+began; removing them only stops them being mistaken for load-bearing.
+
 ### All database access goes through `IStorage`
 
-`server/db.ts` is now imported by `server/storage.ts` and nothing else. Every
-direct Drizzle call in the other eleven files that imported it moved behind the
-interface.
+Within the application `server/db.ts` is now imported by `server/storage.ts` and
+nothing else. Every direct Drizzle call in the other eleven files that imported
+it moved behind the interface. Outside the application three scripts still
+import it directly — `scripts/migrate.ts`, `scripts/seed-demo-data.ts` and
+`init-data.ts` — which is fine and deliberate: they are not the server, they
+run once, and two of them exist precisely to do things `IStorage` must not
+expose.
 
 (Counting those call sites by grep proved unreliable twice — a `db` alone on its
 own line does not match a line-oriented pattern, and both the original
@@ -222,6 +248,20 @@ several versions behind and have run only some of those scripts; they are all
 guarded on `information_schema`, so re-running them on a current database does
 nothing, but skipping them could baseline a schema that is not actually there.
 
+The three `ALTER TABLE` checks moved into that chain rather than disappearing
+with the script: `migrations/legacy/add_language_and_units_to_users.ts` adds
+`users.language`, `users.currency` and `users.temperature_unit`, first in the
+order, because that is where the entrypoint ran them. `0000` assumes those
+columns exist, so a database old enough to predate them would otherwise be
+baselined without them.
+
+The one thing the entrypoint did that `0000` cannot is insert a row: it re-ran
+the whole legacy chain on every start, and `add_email_rbac_and_settings`
+inserted the `email_settings` singleton there. A fresh database now gets the
+table from `0000` and the row from `0001`, which is a no-op on any database the
+legacy chain has already touched. Without it a brand-new installation could
+never save its SMTP settings.
+
 ### The legacy migrations stay in the repository indefinitely
 
 The first version of the cutover treated them as a temporary bridge to be
@@ -239,9 +279,24 @@ They are kept forever, which is only viable if nothing else can break them:
   exit code and on `tsx` resolving inside the container — which is exactly how
   GH issue #5 turned a broken migration into a silent no-op.
 - **They own no connection.** The caller does.
+
+  Both of these are true of the chain `index.ts` declares, which is what runs.
+  `migrations/legacy/add_timestamp_columns.ts` and the three stale `.js` files
+  in the directory meet neither: they open their own pool and call
+  `process.exit`. They are kept only because deleting history is worse than
+  keeping it, no deployment ever ran them, and nothing imports them.
+  `migrations/legacy/README.md` names them under "Not part of the chain".
+- **`npm run check` covers them.** `tsconfig.json` includes `migrations/**` and
+  `scripts/**` alongside the application, so a script that stops compiling is a
+  failed check rather than a surprise during someone's upgrade. This is not
+  hypothetical: moving these files into `legacy/` left one of them calling a `db`
+  that no longer existed, and it went unnoticed precisely because neither
+  directory was being type-checked. (Including `scripts/` is also why `target` is
+  now set: without it `tsc` defaults to ES5 and rejects top-level `await`.)
 - **CI runs the upgrade test on every pull request.** Frozen without
   verification just means unverified; these scripts are otherwise exercised only
-  during a real upgrade, where finding out they broke is too late.
+  during a real upgrade, where finding out they broke is too late. The fixture it
+  upgrades is the oldest shape still supported, so the whole chain runs.
 
 `migrations/legacy/README.md` states the contract: never edited, never added to.
 
@@ -249,17 +304,27 @@ They are kept forever, which is only viable if nothing else can break them:
 
 `npm run db:verify-upgrade` builds a pre-Drizzle installation from a frozen copy
 of the old DDL, seeds it with `npm run db:seed`, snapshots every row, upgrades
-it, and checks five things: every row survives byte-identical; an upgraded
+it, and checks six things: every row survives byte-identical; an upgraded
 database ends up with the same schema as a fresh install; both match
 `shared/schema.ts` according to `drizzle-kit`; and re-running the migration
-changes nothing, since the entrypoint runs it on every start.
+changes neither a row nor the schema, since the entrypoint runs it on every
+start.
+
+The fixture it starts from is deliberately the *oldest* database that can still
+upgrade, not the newest: its `users` table predates `language`, `currency` and
+`temperature_unit`. A fixture that already had them would never exercise the
+chain entry that adds them.
 
 This is not decoration. It is how the email-verification bug below was found.
 
 ## Bugs found, and how
 
-Seven, all fixed here, each with its pinning test rewritten in the same commit.
-They are listed because *how* they were found is the argument for the work:
+Eight, all fixed here. Each is pinned, and all but one by a test rewritten in
+the same commit: the email-verification fix (`065fd17`) ships no test, because
+what pins it is a seed row — `scripts/seed-demo-data.ts` seeds an unverified
+user with a pending token, and `npm run db:verify-upgrade` fails if the upgrade
+verifies them. They are listed because *how* they were found is the argument
+for the work:
 
 | Bug | Found by |
 | --- | --- |
@@ -270,9 +335,15 @@ They are listed because *how* they were found is the argument for the work:
 | Global sharing could not be switched off — the stale public row survived, so the collection stayed public | writing characterisation tests |
 | The drying reminder matched material names case-sensitively | consolidating the two matchers |
 | **The email migration verified every pending registration on every container restart**, letting anyone bypass verification by waiting for a restart | the upgrade row-comparison |
+| `PUT /api/users/:id` answered 200 with an empty body when the row was deleted between the existence check and the update, instead of 404 | reviewing this branch |
 
-The last one is live in the released version, not introduced here, and is worth
-reporting upstream ahead of everything else.
+The email-migration one is live in the released version, not introduced here,
+and is worth reporting upstream ahead of everything else.
+
+The last is the odd one out: it was found reviewing this branch rather than by
+the work, and it predates the branch — `main` has the same empty 200. It is
+fixed here anyway, because the file was being rewritten regardless and the fix
+is one branch and one test.
 
 ## Consequences
 
@@ -291,7 +362,11 @@ reporting upstream ahead of everything else.
 Recorded in `TODO.md` rather than fixed, because each is a product decision or a
 behaviour change rather than a refactor: filaments duplicating catalog names as
 free text; two endpoints implementing sharing differently; the 8-versus-6
-password length split; `PUT /api/settings/email` depending on a row it cannot
-create; the dead `filaments.created_at`/`updated_at` columns; the
+password length split, of which only the admin form was aligned here (it asked
+for 6 while the endpoint behind it requires 8 — the client was simply wrong;
+change-password still requires 6 server-side where registration and reset
+require 8, and that split stands); `PUT /api/settings/email` depending on a row
+it cannot create — `0001` now guarantees that row exists, so what is left is the
+endpoint's fragility rather than a broken installation; the dead `filaments.created_at`/`updated_at` columns; the
 `timestamptz`/`timestamp` inconsistency; and the unused
 `IStorage.getPublicFilamentsWithUser`.

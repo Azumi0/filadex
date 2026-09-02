@@ -24,6 +24,8 @@
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
@@ -72,6 +74,9 @@ function check(label: string, ok: boolean, detail?: string) {
   return ok;
 }
 
+const dataBeforePath = join(tmpdir(), "upgrade-data-before.txt");
+const dataAfterPath = join(tmpdir(), "upgrade-data-after.txt");
+
 const containers: Array<StartedPostgreSqlContainer> = [];
 let allPassed = true;
 
@@ -85,9 +90,11 @@ try {
   run("scripts/seed-demo-data.ts", legacy.url, "seed");
 
   const dataBefore = await snapshotData(legacy.pool);
-  const schemaBefore = await describeSchema(legacy.pool);
-  writeFileSync("/tmp/upgrade-data-before.txt", dataBefore);
-  writeFileSync("/tmp/upgrade-schema-before.txt", schemaBefore);
+  writeFileSync(dataBeforePath, dataBefore);
+  // Not compared against anything - a later migration is allowed to change the
+  // schema. It is written out because when one of the schema checks below
+  // fails, the shape the upgrade started from is the first thing to diff.
+  writeFileSync(join(tmpdir(), "upgrade-schema-before.txt"), await describeSchema(legacy.pool));
   console.log(`Snapshot taken: ${dataBefore.split("\n").length} lines of data.\n`);
 
   console.log("Upgrading:");
@@ -96,7 +103,7 @@ try {
 
   const dataAfter = await snapshotData(legacy.pool);
   const schemaAfter = await describeSchema(legacy.pool);
-  writeFileSync("/tmp/upgrade-data-after.txt", dataAfter);
+  writeFileSync(dataAfterPath, dataAfter);
 
   // --- a fresh install ------------------------------------------------------
   console.log("\nBuilding a fresh install for comparison...");
@@ -110,7 +117,7 @@ try {
   console.log("");
   allPassed = check("upgrade preserved every row unchanged", dataBefore === dataAfter,
     dataBefore === dataAfter ? undefined
-      : "  data differs; see /tmp/upgrade-data-before.txt and /tmp/upgrade-data-after.txt") && allPassed;
+      : `  data differs; see ${dataBeforePath} and ${dataAfterPath}`) && allPassed;
 
   allPassed = check("upgraded schema matches a fresh install", schemaAfter === freshSchema,
     schemaAfter === freshSchema ? undefined : diff(schemaAfter, freshSchema)) && allPassed;
@@ -125,10 +132,14 @@ try {
     freshDrift.statementsToExecute.length === 0,
     "  " + freshDrift.statementsToExecute.join("\n  ")) && allPassed;
 
-  // Re-running must be a no-op, since the entrypoint runs it on every start.
+  // Re-running must be a no-op, since the entrypoint runs it on every start -
+  // in the schema as well as in the data.
   run("scripts/migrate.ts", legacy.url, "migrate (again)");
   const dataAfterSecondRun = await snapshotData(legacy.pool);
-  allPassed = check("running the migration again changes nothing", dataAfter === dataAfterSecondRun) && allPassed;
+  const schemaAfterSecondRun = await describeSchema(legacy.pool);
+  allPassed = check("running the migration again changes no row", dataAfter === dataAfterSecondRun) && allPassed;
+  allPassed = check("running the migration again changes no schema", schemaAfter === schemaAfterSecondRun,
+    schemaAfter === schemaAfterSecondRun ? undefined : diff(schemaAfter, schemaAfterSecondRun)) && allPassed;
 
   await freshPool.end();
   await legacy.pool.end();

@@ -12,8 +12,6 @@ import * as path from "path";
  * Existing installs get their previous global theme.json values backfilled
  * onto every user, so nobody's current look changes; new users get the
  * column defaults (matching theme.json's own factory defaults).
- *
- * Run with: npx tsx migrations/add_user_theme_preferences.ts
  */
 export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: per-user theme preferences...");

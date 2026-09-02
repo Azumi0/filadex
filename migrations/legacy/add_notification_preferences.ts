@@ -8,7 +8,6 @@ import { addColumnIfMissing } from "./helpers";
  * admin-editable "is this material hygroscopic" flag (seeded for the common
  * moisture-sensitive families) that the drying-reminder check reads instead
  * of a hardcoded material list.
- * Run with: npx tsx migrations/add_notification_preferences.ts
  */
 export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: notification preferences...");

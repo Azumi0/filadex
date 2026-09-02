@@ -5,7 +5,6 @@ import { createIndexIfMissing } from "./helpers";
 /**
  * Migration: adds the filament_usage_log table, recording every change to a
  * filament's remainingPercentage (delta weight, resulting percentage, note, source).
- * Run with: npx tsx migrations/add_filament_usage_log.ts
  */
 export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: filament usage log...");

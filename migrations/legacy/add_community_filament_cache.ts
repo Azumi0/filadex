@@ -7,7 +7,6 @@ import { createIndexIfMissing } from "./helpers";
  * cached copy of SpoolmanDB's (MIT-licensed) filament profile dataset. Empty
  * until an admin runs "Refresh community database" - see
  * server/utils/spoolmandb-sync.ts.
- * Run with: npx tsx migrations/add_community_filament_cache.ts
  */
 export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: community filament cache...");

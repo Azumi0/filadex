@@ -2,43 +2,23 @@
 import pg from 'pg';
 const { Pool } = pg;
 
-// Create a fallback logger in case the real logger is not available
-const fallbackLogger = {
+// This used to try to import server/utils/logger and fall back to the console
+// if that failed. Legacy migrations may not import from server/, so the console
+// is all there is.
+const logger = {
   info: console.log,
   error: console.error,
   warn: console.warn,
   debug: console.log
 };
 
-type Logger = typeof fallbackLogger;
-let logger: Logger = fallbackLogger;
-
 // Create a database connection directly
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://filadex:filadex@db:5432/filadex'
 });
 
-async function importDependencies(): Promise<void> {
-  try {
-    // Try to import the logger
-    try {
-      const loggerModule = await import('../server/utils/logger');
-      if (loggerModule.logger) {
-        logger = loggerModule.logger as Logger;
-      }
-    } catch (loggerError) {
-      console.log('Using fallback logger');
-    }
-  } catch (error) {
-    console.error('Error importing dependencies:', error);
-  }
-}
-
 export async function runMigration(): Promise<void> {
   try {
-    // Import dependencies first
-    await importDependencies();
-
     logger.info('Starting migration: Adding timestamp columns to filaments table');
 
     // Check if the columns already exist

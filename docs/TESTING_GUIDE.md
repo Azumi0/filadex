@@ -119,14 +119,18 @@ docker-compose up
 
 Test that migrations work:
 ```bash
-# Run migration script
-npx tsx run-migration.ts
+# Bring a database up to date (this is what the container does on start)
+npm run db:migrate
+
+# Check that a pre-Drizzle installation can still upgrade (needs Docker)
+npm run db:verify-upgrade
 ```
 
 **Expected**:
 - Migration runs successfully
 - No errors
 - Database schema updated correctly
+- `db:verify-upgrade` reports every check as PASS
 
 ## Common Issues & Solutions
 

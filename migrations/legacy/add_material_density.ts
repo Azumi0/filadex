@@ -8,7 +8,6 @@ import { addColumnIfMissing } from "./helpers";
  * (existing rows use varied vendor-specific names like "PLA Basic" or
  * "PA6-CF", not exact material-type strings). Nullable and always editable
  * per material — seeding is a starting point, not a requirement.
- * Run with: npx tsx migrations/add_material_density.ts
  */
 export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: material density...");

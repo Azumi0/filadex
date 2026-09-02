@@ -1,38 +1,18 @@
 import { sql } from "drizzle-orm";
 import type { LegacyDatabase } from "./types";
 
-// Create a fallback logger in case the real logger is not available
-const fallbackLogger = {
+// This used to try to import server/utils/logger and fall back to the console
+// if that failed. Legacy migrations may not import from server/, so the console
+// is all there is.
+const logger = {
   info: console.log,
   error: console.error,
   warn: console.warn,
   debug: console.log
 };
 
-type Logger = typeof fallbackLogger;
-let logger: Logger = fallbackLogger;
-
-async function importDependencies(): Promise<void> {
-  try {
-    // Try to import the logger
-    try {
-      const loggerModule = await import('../server/utils/logger');
-      if (loggerModule.logger) {
-        logger = loggerModule.logger as Logger;
-      }
-    } catch (loggerError) {
-      console.log('Using fallback logger');
-    }
-  } catch (error) {
-    console.error('Error importing dependencies:', error);
-  }
-}
-
 export async function runMigration(db: LegacyDatabase): Promise<void> {
   try {
-    // Import dependencies first
-    await importDependencies();
-
     logger.info('Starting migration: Adding user_id column to filaments table');
 
     // Check if the column already exists

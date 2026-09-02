@@ -221,7 +221,13 @@ export function registerUserRoutes(app: Express): void {
       // for no change answers with the user unchanged rather than failing.
       const updatedUser = await storage.updateUser(id, updateData);
 
-      res.json(updatedUser && managedUser(updatedUser));
+      // The existence check above cannot cover the row being deleted between it
+      // and the update. Nothing came back, so there is nothing to answer with.
+      if (!updatedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json(managedUser(updatedUser));
     } catch (error) {
       appLogger.error("Update user error:", error);
       res.status(500).json({ message: "Server error" });

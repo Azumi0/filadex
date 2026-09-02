@@ -13,8 +13,6 @@ import { addColumnIfMissing } from "./helpers";
  * filament_type_id but does NOT drop the now-redundant columns from
  * `filaments` (see migrations/drop_filament_type_columns.ts for that, run
  * separately once the backfill is verified).
- *
- * Run with: npx tsx migrations/add_filament_types.ts
  */
 export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: filament types...");

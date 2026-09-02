@@ -30,7 +30,8 @@ export async function addColumnIfMissing(
 
 export async function indexExists(
   db: LegacyDatabase,
-indexName: string) {
+  indexName: string,
+) {
   const { rows } = await db.execute(sql`
     SELECT 1
     FROM pg_indexes

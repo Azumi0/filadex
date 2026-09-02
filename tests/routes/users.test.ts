@@ -6,7 +6,7 @@
  * a specification: a behaviour change belongs in its own commit, together with
  * the test that pins it.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { registerAuthRoutes } from "../../server/routes/auth";
@@ -475,6 +475,25 @@ describe("PUT /api/users/:id", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.forceChangePassword).toBe(false);
+  });
+
+  // The existence check at the top of the handler cannot cover the row being
+  // deleted between it and the update. Before, nothing came back and the route
+  // answered 200 with an empty body.
+  it("reports a user that disappeared mid-update as not found", async () => {
+    const bob = await createUserAsAdmin({ username: "bob", password: "bobs-password" });
+    vi.spyOn(storage, "updateUser").mockResolvedValue(undefined);
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+
+    const response = await request(app)
+      .put(`/api/users/${bob.id}`)
+      .set("Cookie", adminCookie)
+      .send({ username: "bobby" });
+
+    expect(response.status).toBe(404);
+    expect(response.body.message).toBe("User not found");
   });
 
   it("returns the unchanged user for a request that changes nothing", async () => {

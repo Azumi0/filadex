@@ -6,7 +6,6 @@ import { addColumnIfMissing } from "./helpers";
  * Migration: adds custom_field_definitions (per-user, user-defined tracked
  * attributes) and a customFieldValues JSONB column on filaments to hold their
  * values, keyed by definition id.
- * Run with: npx tsx migrations/add_custom_fields.ts
  */
 export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: custom fields...");

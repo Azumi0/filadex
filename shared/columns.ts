@@ -11,7 +11,6 @@ import {
   foreignKey,
   index,
   uniqueIndex,
-  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -57,9 +56,6 @@ export const table = pgTable;
  * migration that assumes a different name would not find the constraint.
  */
 export { foreignKey, index, uniqueIndex };
-
-/** A column reference, for foreign keys. */
-export type ColumnRef = () => AnyPgColumn;
 
 export const t = {
   /** Auto-incrementing primary key. */

@@ -6,7 +6,6 @@ import { addColumnIfMissing, columnExists, createIndexIfMissing } from "./helper
  * Migration: adds RBAC (role column), email/verification/password-reset
  * columns to users, a case-insensitive unique username index, the
  * email_settings singleton table, and the catalog_requests table.
- * Run with: npx tsx migrations/add_email_rbac_and_settings.ts
  */
 export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: email, RBAC, and catalog requests...");

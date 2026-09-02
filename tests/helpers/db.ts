@@ -2,9 +2,11 @@
  * The test database connection, plus the schema and reset handling around it.
  *
  * The connection URL comes from tests/global-setup.ts, which either honours
- * DATABASE_URL or starts a throwaway Postgres container. Either way this is a
- * real server reached through the same node-postgres driver the application
- * uses, so nothing here changes the SQL semantics under test.
+ * TEST_DATABASE_URL - deliberately not the application's own DATABASE_URL,
+ * because createSchema below drops the public schema - or starts a throwaway
+ * Postgres container. Either way this is a real server reached through the same
+ * node-postgres driver the application uses, so nothing here changes the SQL
+ * semantics under test.
  *
  * The schema is derived from shared/schema.ts at startup via drizzle-kit's API
  * rather than from a checked-in .sql file or the imperative migrations/ scripts,

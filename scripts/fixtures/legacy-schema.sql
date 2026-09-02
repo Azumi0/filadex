@@ -1,11 +1,19 @@
 -- The schema docker-entrypoint.sh created before this project moved to
--- generated migrations, frozen here verbatim.
+-- generated migrations, frozen here.
 --
 -- This is not run by the application. It exists so scripts/legacy-db.ts can
 -- rebuild the database an existing installation upgrades *from*, which is what
--- scripts/verify-upgrade.ts checks the upgrade against. Do not edit it: it
--- describes what deployments actually ran, and changing it would only make the
--- upgrade test agree with a fiction.
+-- scripts/verify-upgrade.ts checks the upgrade against. Do not edit it to make
+-- a failing check pass: it describes what deployments actually ran, and
+-- changing it would only make the upgrade test agree with a fiction.
+--
+-- It deliberately represents the *oldest* database still able to upgrade, not
+-- the newest: `users` here has no language, currency or temperature_unit,
+-- because the entrypoint gained those columns in its CREATE TABLE block only
+-- after installations existed without them. That is exactly why the entrypoint
+-- also carried three ALTER TABLE checks for them, and why the chain still has
+-- to (migrations/legacy/add_language_and_units_to_users.ts). A fixture that
+-- already had them would never exercise that.
 
   CREATE SCHEMA IF NOT EXISTS public;
 
@@ -20,9 +28,6 @@
     password TEXT NOT NULL,
     is_admin BOOLEAN DEFAULT FALSE,
     force_change_password BOOLEAN DEFAULT TRUE,
-    language TEXT DEFAULT 'en',
-    currency TEXT DEFAULT 'EUR',
-    temperature_unit TEXT DEFAULT 'C',
     last_login TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
   );

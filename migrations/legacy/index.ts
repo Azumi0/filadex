@@ -1,4 +1,5 @@
 import type { LegacyDatabase } from "./types";
+import { runMigration as addLanguageAndUnitsToUsers } from "./add_language_and_units_to_users";
 import { runMigration as addUserIdColumn } from "./add_user_id_column";
 import { runMigration as addEmailRbacAndSettings } from "./add_email_rbac_and_settings";
 import { runMigration as addFilamentUsageLog } from "./add_filament_usage_log";
@@ -15,14 +16,16 @@ export type { LegacyDatabase };
 
 /**
  * The pre-Drizzle upgrade path, in the order docker-entrypoint.sh used to run
- * it. See README.md in this directory: this list is closed. Nothing is ever
- * added to it, because every schema change from now on is a generated
- * migration in ../pg.
+ * it - beginning with the three ALTER TABLE checks it did inline rather than as
+ * a script of their own. See README.md in this directory: this list is closed.
+ * Nothing is added to it, because every schema change from now on is a
+ * generated migration in ../pg.
  */
 export const LEGACY_MIGRATIONS: Array<{
   name: string;
   run: (db: LegacyDatabase) => Promise<void>;
 }> = [
+  { name: "add language, currency and temperature unit to users", run: addLanguageAndUnitsToUsers },
   { name: "add user_id column to filaments", run: addUserIdColumn },
   { name: "add email, roles and catalog requests", run: addEmailRbacAndSettings },
   { name: "add filament usage log", run: addFilamentUsageLog },

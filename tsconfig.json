@@ -1,11 +1,14 @@
 {
-  "include": ["client/src/**/*", "shared/**/*", "server/**/*", "tests/**/*", "vitest.config.ts"],
+  "include": ["client/src/**/*", "shared/**/*", "server/**/*", "tests/**/*", "scripts/**/*", "migrations/**/*", "vitest.config.ts"],
   "exclude": ["node_modules", "build", "dist"],
   "compilerOptions": {
     "incremental": true,
     "tsBuildInfoFile": "./node_modules/typescript/tsbuildinfo",
     "noEmit": true,
     "module": "ESNext",
+    // Needed for the top-level await in scripts/; without it tsc defaults to
+    // ES5 and rejects it.
+    "target": "ESNext",
     "strict": true,
     "lib": ["esnext", "dom", "dom.iterable"],
     "jsx": "preserve",
