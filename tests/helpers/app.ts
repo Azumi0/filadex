@@ -1,0 +1,48 @@
+import express, { type Express } from "express";
+import cookieParser from "cookie-parser";
+import request from "supertest";
+import { lastMailTo, tokenFromMail } from "./mailbox";
+
+/**
+ * The seam these tests work at: a real express app with the real route
+ * modules mounted, talking to a real Postgres. Only the middleware the routes
+ * actually depend on is installed (JSON body parsing and cookies) - vite,
+ * helmet and request logging play no part in the behaviour under test.
+ */
+export function createApp(...registerRoutes: Array<(app: Express) => void>): Express {
+  const app = express();
+  app.use(express.json());
+  app.use(cookieParser());
+  for (const register of registerRoutes) register(app);
+  return app;
+}
+
+/** Logs in and returns the session cookie, failing loudly if login didn't work. */
+export async function loginAs(app: Express, username: string, password: string): Promise<string> {
+  const response = await request(app)
+    .post("/api/auth/login")
+    .send({ username, password });
+
+  if (response.status !== 200) {
+    throw new Error(`login as ${username} failed: ${response.status} ${JSON.stringify(response.body)}`);
+  }
+  return response.headers["set-cookie"][0];
+}
+
+/**
+ * Creates a usable account the way a real user does: register, then follow the
+ * link from the verification email. Returns the session cookie.
+ */
+export async function registerAndVerify(
+  app: Express,
+  user: { username: string; email: string; password: string },
+): Promise<string> {
+  await request(app).post("/api/auth/register").send(user).expect(201);
+
+  const token = tokenFromMail(lastMailTo(user.email));
+  if (!token) throw new Error(`no verification token was emailed to ${user.email}`);
+
+  await request(app).get("/api/auth/verify-email").query({ token }).expect(200);
+
+  return loginAs(app, user.username, user.password);
+}
