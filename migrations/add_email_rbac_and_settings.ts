@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "../server/db";
-import { addColumnIfMissing, createIndexIfMissing } from "./helpers";
+import { addColumnIfMissing, columnExists, createIndexIfMissing } from "./helpers";
 
 /**
  * Migration: adds RBAC (role column), email/verification/password-reset
@@ -22,6 +22,9 @@ export async function runMigration() {
   console.log("✓ Added role column and backfilled from is_admin");
 
   await addColumnIfMissing("users", "email", sql`ALTER TABLE users ADD COLUMN email TEXT UNIQUE;`);
+  // Whether this run is the one that introduces email verification decides
+  // whether the backfill below is allowed to touch anything.
+  const introducingEmailVerification = !(await columnExists("users", "email_verified"));
   await addColumnIfMissing("users", "email_verified", sql`ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT false;`);
   await addColumnIfMissing("users", "email_verification_token", sql`ALTER TABLE users ADD COLUMN email_verification_token TEXT;`);
   await addColumnIfMissing("users", "email_verification_expires", sql`ALTER TABLE users ADD COLUMN email_verification_expires TIMESTAMP;`);
@@ -29,10 +32,17 @@ export async function runMigration() {
   await addColumnIfMissing("users", "password_reset_expires", sql`ALTER TABLE users ADD COLUMN password_reset_expires TIMESTAMP;`);
   console.log("✓ Added email, verification, and password-reset columns");
 
-  // Existing self-hosted admin accounts predate email verification; don't lock them out.
-  await db.execute(sql`
-    UPDATE users SET email_verified = true WHERE email_verified = false;
-  `);
+  // Existing self-hosted accounts predate email verification; don't lock them
+  // out. Guarded so it happens only on the run that adds the column: this
+  // script is re-run on every startup, and unguarded it verified every pending
+  // registration each time - which let anyone bypass verification entirely by
+  // waiting for a restart.
+  if (introducingEmailVerification) {
+    await db.execute(sql`
+      UPDATE users SET email_verified = true WHERE email_verified = false;
+    `);
+    console.log("✓ Verified pre-existing accounts");
+  }
 
   await createIndexIfMissing(
     "users_username_lower_idx",
