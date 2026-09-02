@@ -1,4 +1,5 @@
 import { storage } from "../storage";
+import { isOneOfMaterials } from "./materials";
 import { sendMail } from "./mailer";
 import { lowStockEmail, dryingReminderEmail } from "./email-templates";
 import { logger } from "./logger";
@@ -18,12 +19,7 @@ function daysAgo(dateStr: string | Date): number {
  */
 export async function runScheduledChecks(): Promise<void> {
   const allUsers = await storage.getVerifiedUsers();
-  // Compared lowercased: a filament's material is free text while the catalog
-  // stores a row, so a spool entered as "pla" has to count as the catalog's
-  // "PLA" - otherwise it silently never gets a drying reminder.
-  const hygroscopicNames = new Set(
-    (await storage.getHygroscopicMaterialNames()).map((name) => name.toLowerCase()),
-  );
+  const isHygroscopic = isOneOfMaterials(await storage.getHygroscopicMaterialNames());
 
   for (const user of allUsers) {
     if (!user.email) continue;
@@ -53,7 +49,7 @@ export async function runScheduledChecks(): Promise<void> {
     if (user.notifyDryingReminder) {
       const reminderDays = user.dryingReminderDays ?? 30;
       const dryingCandidates = userFilaments.filter((f) => {
-        if (!hygroscopicNames.has(f.material.toLowerCase())) return false;
+        if (!isHygroscopic(f.material)) return false;
         if (
           f.dryingReminderNotifiedAt &&
           Date.now() - f.dryingReminderNotifiedAt.getTime() < DRYING_REMINDER_COOLDOWN_MS

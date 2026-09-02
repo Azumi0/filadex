@@ -3,6 +3,7 @@ import { authenticate } from "../auth";
 import { storage } from "../storage";
 import { logger as appLogger } from "../utils/logger";
 import { validateId } from "../utils/validation";
+import { isOneOfMaterials } from "../utils/materials";
 
 export function registerPublicRoutes(app: Express): void {
   // Get public filaments for a specific user by ID
@@ -44,13 +45,9 @@ export function registerPublicRoutes(app: Express): void {
           .map((s) => s.materialId as number);
 
         const sharedMaterials = await storage.getMaterialsByIds(sharedMaterialIds);
-        // Compared case-insensitively: a filament's material is free text, so a
-        // spool entered as "petg" must still be covered by sharing the
-        // catalog's "PETG" - otherwise the owner gets an empty public page
-        // with no indication their share matched nothing.
-        const sharedMaterialNames = new Set(sharedMaterials.map((m) => m.name.toLowerCase()));
+        const isShared = isOneOfMaterials(sharedMaterials.map((m) => m.name));
 
-        publicFilaments = filaments.filter((filament) => sharedMaterialNames.has(filament.material.toLowerCase()));
+        publicFilaments = filaments.filter((filament) => isShared(filament.material));
       }
 
       // Return filaments with user information
