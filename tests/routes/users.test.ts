@@ -1,10 +1,10 @@
 /**
  * Characterisation tests for server/routes/users.ts.
  *
- * These record what the endpoints do TODAY, so that moving their database
- * access behind IStorage can be shown to change nothing. Where current
- * behaviour looks wrong, the test still asserts the current behaviour and says
- * so in a comment - fixes belong in their own change, not in a refactor.
+ * These record observable behaviour at the HTTP boundary, so that moving the
+ * database access behind IStorage can be shown to change nothing. They are not
+ * a specification: a behaviour change belongs in its own commit, together with
+ * the test that pins it.
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
@@ -366,11 +366,7 @@ describe("PUT /api/users/:id", () => {
     expect(response.body.message).toBe("Username already exists");
   });
 
-  // KNOWN BUG (recorded, not fixed): the guard that stops a user colliding with
-  // someone else's name also swallows a pure change of capitalisation, which
-  // leaves nothing to update - and an update with nothing to set is the 500
-  // below. So "rename bob to Bob" fails with a server error.
-  it("answers 500 for a rename that only changes capitalisation", async () => {
+  it("applies a rename that only changes capitalisation", async () => {
     const bob = await createUserAsAdmin({ username: "bob", password: "bobs-password" });
 
     const response = await request(app)
@@ -378,8 +374,11 @@ describe("PUT /api/users/:id", () => {
       .set("Cookie", adminCookie)
       .send({ username: "Bob" });
 
-    expect(response.status).toBe(500);
-    expect(response.body.message).toBe("Server error");
+    expect(response.status).toBe(200);
+    expect(response.body.username).toBe("Bob");
+
+    const listed = await request(app).get("/api/users").set("Cookie", adminCookie);
+    expect(listed.body.map((user: { username: string }) => user.username)).toContain("Bob");
   });
 
   it("changes a user's password", async () => {
@@ -457,16 +456,20 @@ describe("PUT /api/users/:id", () => {
     expect(response.body.forceChangePassword).toBe(false);
   });
 
-  // KNOWN BUG (recorded, not fixed): with nothing to change, the handler still
-  // issues an UPDATE with an empty SET clause, which drizzle refuses. A no-op
-  // request should be a no-op, not a 500.
-  it("answers 500 for a request that changes nothing", async () => {
+  it("returns the unchanged user for a request that changes nothing", async () => {
     const bob = await createUserAsAdmin({ username: "bob", password: "bobs-password" });
 
     const response = await request(app).put(`/api/users/${bob.id}`).set("Cookie", adminCookie).send({});
 
-    expect(response.status).toBe(500);
-    expect(response.body.message).toBe("Server error");
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      id: bob.id,
+      username: "bob",
+      isAdmin: false,
+      role: "user",
+      forceChangePassword: true,
+    });
+    await expect(loginAs(app, "bob", "bobs-password")).resolves.toBeTruthy();
   });
 });
 

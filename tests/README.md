@@ -7,14 +7,13 @@ npm run test:watch
 
 ## What these tests are
 
-Characterisation tests: they record what the HTTP endpoints do **today**, not
-what they ought to do. Their job is to make behaviour-preserving refactors
-provable — if a change makes one of them fail, the change altered observable
-behaviour.
+Characterisation tests: they record what the HTTP endpoints observably do.
+Their job is to make behaviour-preserving refactors provable — if a change
+makes one of them fail, the change altered observable behaviour.
 
-A handful of them assert behaviour that is wrong. Those are marked
-`KNOWN BUG (recorded, not fixed)` with an explanation. Fixing one means
-changing its test in the same commit, deliberately — which is the point.
+They are not a specification. Changing one of these tests means you are
+changing the product's behaviour, so it belongs in its own commit alongside the
+code change that causes it — never folded into a refactor.
 
 ## The database
 

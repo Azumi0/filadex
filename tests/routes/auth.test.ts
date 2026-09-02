@@ -1,10 +1,10 @@
 /**
  * Characterisation tests for server/routes/auth.ts.
  *
- * These record what the endpoints do TODAY, so that moving their database
- * access behind IStorage can be shown to change nothing. Where current
- * behaviour looks wrong, the test still asserts the current behaviour and says
- * so in a comment - fixes belong in their own change, not in a refactor.
+ * These record observable behaviour at the HTTP boundary, so that moving the
+ * database access behind IStorage can be shown to change nothing. They are not
+ * a specification: a behaviour change belongs in its own commit, together with
+ * the test that pins it.
  */
 import { beforeEach, describe, expect, it, afterEach, vi } from "vitest";
 import request from "supertest";
@@ -446,16 +446,36 @@ describe("POST /api/auth/login", () => {
     expect(response.body.message).toBe("Invalid credentials");
   });
 
-  // KNOWN BUG (recorded, not fixed): registration treats usernames as
-  // case-insensitive - "ALICE" cannot register once "alice" exists - but login
-  // looks the user up with a case-sensitive `eq`, so the only spelling that can
-  // ever log in is the exact one used at registration.
-  it("will not log in a username that differs only in case", async () => {
+  // Registration treats usernames as case-insensitive - "ALICE" cannot register
+  // once "alice" exists - so "ALICE" has to be a way to log in as "alice".
+  it("logs in a username that differs only in case", async () => {
     await registerAndVerify(app, alice);
 
     const response = await request(app)
       .post("/api/auth/login")
       .send({ username: "ALICE", password: alice.password });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user.username).toBe("alice");
+  });
+
+  it("logs in an account registered with capitals, whatever case is typed", async () => {
+    await registerAndVerify(app, { ...alice, username: "Alice" });
+
+    const response = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "alice", password: alice.password });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user.username).toBe("Alice");
+  });
+
+  it("still rejects a wrong password when the case differs", async () => {
+    await registerAndVerify(app, alice);
+
+    const response = await request(app)
+      .post("/api/auth/login")
+      .send({ username: "ALICE", password: "wrong" });
 
     expect(response.status).toBe(401);
     expect(response.body.message).toBe("Invalid credentials");

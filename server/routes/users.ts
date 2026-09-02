@@ -6,6 +6,18 @@ import { authenticate, isAdmin, hashPassword } from "../auth";
 import { logger as appLogger } from "../utils/logger";
 import { and } from "drizzle-orm";
 
+// The shape PUT /api/users/:id answers with, shared between the update and the
+// no-op path so the two cannot return different fields.
+const updatedUserFields = {
+  id: users.id,
+  username: users.username,
+  isAdmin: users.isAdmin,
+  role: users.role,
+  forceChangePassword: users.forceChangePassword,
+  createdAt: users.createdAt,
+  lastLogin: users.lastLogin,
+};
+
 export function registerUserRoutes(app: Express): void {
   // Update user language preference
   app.post("/api/users/language", authenticate, async (req, res) => {
@@ -208,16 +220,19 @@ export function registerUserRoutes(app: Express): void {
       const updateData: any = {};
 
       if (username) {
-        // Check if new username already exists (if changed, case-insensitive)
+        // Only a name that resolves to a different user can collide. Changing
+        // just the capitalisation is this same user renaming themselves, so it
+        // skips the check - but it is still applied, unlike before, when it was
+        // silently dropped and left nothing to update at all.
         if (username.toLowerCase() !== existingUser[0].username.toLowerCase()) {
           const usernameExists = await db.select().from(users).where(sql`LOWER(${users.username}) = LOWER(${username})`);
 
           if (usernameExists.length > 0) {
             return res.status(400).json({ message: "Username already exists" });
           }
-
-          updateData.username = username;
         }
+
+        updateData.username = username;
       }
 
       if (password) {
@@ -240,19 +255,18 @@ export function registerUserRoutes(app: Express): void {
         updateData.forceChangePassword = forceChangePassword;
       }
 
+      // Nothing to change. An UPDATE with an empty SET is a driver error, and a
+      // request that asks for no change should be a no-op, not a 500.
+      if (Object.keys(updateData).length === 0) {
+        const [unchanged] = await db.select(updatedUserFields).from(users).where(eq(users.id, id));
+        return res.json(unchanged);
+      }
+
       // Update user
       const [updatedUser] = await db.update(users)
         .set(updateData)
         .where(eq(users.id, id))
-        .returning({
-          id: users.id,
-          username: users.username,
-          isAdmin: users.isAdmin,
-          role: users.role,
-          forceChangePassword: users.forceChangePassword,
-          createdAt: users.createdAt,
-          lastLogin: users.lastLogin
-        });
+        .returning(updatedUserFields);
 
       res.json(updatedUser);
     } catch (error) {

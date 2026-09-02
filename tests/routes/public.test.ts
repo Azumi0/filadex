@@ -2,10 +2,10 @@
  * Characterisation tests for server/routes/public.ts - the unauthenticated
  * sharing path, plus the /api/sharing endpoints that control it.
  *
- * These record what the endpoints do TODAY, so that moving their database
- * access behind IStorage can be shown to change nothing. Where current
- * behaviour looks wrong, the test still asserts the current behaviour and says
- * so in a comment - fixes belong in their own change, not in a refactor.
+ * These record observable behaviour at the HTTP boundary, so that moving the
+ * database access behind IStorage can be shown to change nothing. They are not
+ * a specification: a behaviour change belongs in its own commit, together with
+ * the test that pins it.
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";

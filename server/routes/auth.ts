@@ -219,7 +219,10 @@ export function registerAuthRoutes(app: Express): void {
     try {
       const { username, password } = req.body;
 
-      const [user] = await db.select().from(users).where(eq(users.username, username));
+      // Matched case-insensitively, the same way registration and admin user
+      // creation check for a duplicate: if "ALICE" cannot be registered while
+      // "alice" exists, then "ALICE" has to be a way to log in as "alice".
+      const [user] = await db.select().from(users).where(sql`LOWER(${users.username}) = LOWER(${username})`);
 
       if (!user || !(await verifyPassword(password, user.password))) {
         return res.status(401).json({ message: "Invalid credentials" });
