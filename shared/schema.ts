@@ -1,54 +1,54 @@
-import { pgTable, text, serial, integer, boolean, numeric, date, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { table, t } from "./columns";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const users = pgTable("users", {
-  id: serial("id").primaryKey(),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
-  isAdmin: boolean("is_admin").default(false),
+export const users = table("users", {
+  id: t.pk("id"),
+  username: t.text("username").notNull().unique(),
+  password: t.text("password").notNull(),
+  isAdmin: t.bool("is_admin").default(false),
   // Source of truth for authorization; isAdmin above is kept as a mirror
   // (role === 'admin') so existing code reading isAdmin keeps working.
-  role: text("role").notNull().default("user"), // 'admin' | 'user'
-  email: text("email").unique(),
-  emailVerified: boolean("email_verified").default(false),
-  emailVerificationToken: text("email_verification_token"),
-  emailVerificationExpires: timestamp("email_verification_expires"),
-  passwordResetToken: text("password_reset_token"),
-  passwordResetExpires: timestamp("password_reset_expires"),
-  forceChangePassword: boolean("force_change_password").default(true),
-  language: text("language").default("en"),
-  currency: text("currency").default("EUR"),
-  temperatureUnit: text("temperature_unit").default("C"),
-  lastLogin: timestamp("last_login"),
-  createdAt: timestamp("created_at").defaultNow(),
+  role: t.text("role").notNull().default("user"), // 'admin' | 'user'
+  email: t.text("email").unique(),
+  emailVerified: t.bool("email_verified").default(false),
+  emailVerificationToken: t.text("email_verification_token"),
+  emailVerificationExpires: t.timestamp("email_verification_expires"),
+  passwordResetToken: t.text("password_reset_token"),
+  passwordResetExpires: t.timestamp("password_reset_expires"),
+  forceChangePassword: t.bool("force_change_password").default(true),
+  language: t.text("language").default("en"),
+  currency: t.text("currency").default("EUR"),
+  temperatureUnit: t.text("temperature_unit").default("C"),
+  lastLogin: t.timestamp("last_login"),
+  createdAt: t.timestamp("created_at").defaultNow(),
   // Low-stock / drying-reminder email alert preferences (per-user, not global)
-  lowStockThresholdPercent: integer("low_stock_threshold_percent").default(15),
-  notifyLowStock: boolean("notify_low_stock").default(true),
-  notifyDryingReminder: boolean("notify_drying_reminder").default(true),
-  dryingReminderDays: integer("drying_reminder_days").default(30),
+  lowStockThresholdPercent: t.int("low_stock_threshold_percent").default(15),
+  notifyLowStock: t.bool("notify_low_stock").default(true),
+  notifyDryingReminder: t.bool("notify_drying_reminder").default(true),
+  dryingReminderDays: t.int("drying_reminder_days").default(30),
   // Per-user UI theme (previously a single global theme.json file shared by
   // every user - see migrations/add_user_theme_preferences.ts)
-  themeVariant: text("theme_variant").default("professional"),
-  themePrimary: text("theme_primary").default("#EA580C"),
-  themeAppearance: text("theme_appearance").default("dark"), // 'light' | 'dark'
-  themeRadius: numeric("theme_radius").default("0.8"),
+  themeVariant: t.text("theme_variant").default("professional"),
+  themePrimary: t.text("theme_primary").default("#EA580C"),
+  themeAppearance: t.text("theme_appearance").default("dark"), // 'light' | 'dark'
+  themeRadius: t.numeric("theme_radius").default("0.8"),
 });
 
 // A filament product (vendor, material, color, diameter, print temp) defined
 // once; filaments (below) become spool instances referencing one of these,
 // so buying 5 identical spools no longer means re-entering the same
 // manufacturer/material/color/diameter 5 times. See IMPLEMENTATION_PLAN.md #9.
-export const filamentTypes = pgTable("filament_types", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
-  manufacturer: text("manufacturer"),
-  material: text("material").notNull(),
-  colorName: text("color_name").notNull(),
-  colorCode: text("color_code"),
-  diameter: numeric("diameter"),
-  printTemp: text("print_temp"),
-  createdAt: timestamp("created_at").defaultNow(),
+export const filamentTypes = table("filament_types", {
+  id: t.pk("id"),
+  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }),
+  manufacturer: t.text("manufacturer"),
+  material: t.text("material").notNull(),
+  colorName: t.text("color_name").notNull(),
+  colorCode: t.text("color_code"),
+  diameter: t.numeric("diameter"),
+  printTemp: t.text("print_temp"),
+  createdAt: t.timestamp("created_at").defaultNow(),
 });
 
 export type FilamentType = typeof filamentTypes.$inferSelect;
@@ -57,28 +57,28 @@ export type FilamentType = typeof filamentTypes.$inferSelect;
 // colorName, colorCode, diameter, printTemp) live on filamentTypes instead -
 // server/storage.ts joins them back in so every route/component keeps
 // working against the same flattened shape (see the `Filament` type below).
-export const filaments = pgTable("filaments", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
-  filamentTypeId: integer("filament_type_id").notNull().references(() => filamentTypes.id),
-  name: text("name").notNull(),
-  totalWeight: numeric("total_weight").notNull(),
-  remainingPercentage: numeric("remaining_percentage").notNull(),
-  purchaseDate: date("purchase_date"),
-  purchasePrice: numeric("purchase_price"), // Kaufpreis in EUR
-  status: text("status"),  // 'sealed', 'opened'
-  spoolType: text("spool_type"), // 'spooled', 'spoolless'
-  dryerCount: integer("dryer_count").default(0), // Anzahl der Trocknungen
-  lastDryingDate: date("last_drying_date"), // Datum der letzten Trocknung
-  storageLocation: text("storage_location"), // Lagerort
+export const filaments = table("filaments", {
+  id: t.pk("id"),
+  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }),
+  filamentTypeId: t.fk("filament_type_id", () => filamentTypes.id).notNull(),
+  name: t.text("name").notNull(),
+  totalWeight: t.numeric("total_weight").notNull(),
+  remainingPercentage: t.numeric("remaining_percentage").notNull(),
+  purchaseDate: t.date("purchase_date"),
+  purchasePrice: t.numeric("purchase_price"), // Kaufpreis in EUR
+  status: t.text("status"),  // 'sealed', 'opened'
+  spoolType: t.text("spool_type"), // 'spooled', 'spoolless'
+  dryerCount: t.int("dryer_count").default(0), // Anzahl der Trocknungen
+  lastDryingDate: t.date("last_drying_date"), // Datum der letzten Trocknung
+  storageLocation: t.text("storage_location"), // Lagerort
   // Set when a low-stock email is sent, cleared once remaining % rises back
   // above the threshold - prevents re-notifying every scheduled check.
-  lowStockNotifiedAt: timestamp("low_stock_notified_at"),
+  lowStockNotifiedAt: t.timestamp("low_stock_notified_at"),
   // Set when a drying-reminder email is sent; throttles reminders to at most
   // once/day rather than every scheduled check, until lastDryingDate changes.
-  dryingReminderNotifiedAt: timestamp("drying_reminder_notified_at"),
+  dryingReminderNotifiedAt: t.timestamp("drying_reminder_notified_at"),
   // Values for this user's customFieldDefinitions, keyed by definition id (as a string)
-  customFieldValues: jsonb("custom_field_values").$type<Record<string, any>>().default({}),
+  customFieldValues: t.json<Record<string, any>>("custom_field_values").default({}),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
@@ -207,40 +207,40 @@ export const insertFilamentSchema = baseInsertFilamentSchema.transform((data) =>
 });
 
 // Neue Listen für die Einstellungen
-export const manufacturers = pgTable("manufacturers", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  sortOrder: integer("sort_order").default(999),
-  createdAt: timestamp("created_at").defaultNow()
+export const manufacturers = table("manufacturers", {
+  id: t.pk("id"),
+  name: t.text("name").notNull().unique(),
+  sortOrder: t.int("sort_order").default(999),
+  createdAt: t.timestamp("created_at").defaultNow()
 });
 
-export const materials = pgTable("materials", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  sortOrder: integer("sort_order").default(999),
-  density: numeric("density"), // g/cm^3; lets weight<->length conversions work without an external lookup
-  isHygroscopic: boolean("is_hygroscopic").default(false), // drives the drying-reminder email check
-  createdAt: timestamp("created_at").defaultNow()
+export const materials = table("materials", {
+  id: t.pk("id"),
+  name: t.text("name").notNull().unique(),
+  sortOrder: t.int("sort_order").default(999),
+  density: t.numeric("density"), // g/cm^3; lets weight<->length conversions work without an external lookup
+  isHygroscopic: t.bool("is_hygroscopic").default(false), // drives the drying-reminder email check
+  createdAt: t.timestamp("created_at").defaultNow()
 });
 
-export const colors = pgTable("colors", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  code: text("code").notNull(),
-  createdAt: timestamp("created_at").defaultNow()
+export const colors = table("colors", {
+  id: t.pk("id"),
+  name: t.text("name").notNull(),
+  code: t.text("code").notNull(),
+  createdAt: t.timestamp("created_at").defaultNow()
 });
 
-export const diameters = pgTable("diameters", {
-  id: serial("id").primaryKey(),
-  value: numeric("value").notNull().unique(),
-  createdAt: timestamp("created_at").defaultNow()
+export const diameters = table("diameters", {
+  id: t.pk("id"),
+  value: t.numeric("value").notNull().unique(),
+  createdAt: t.timestamp("created_at").defaultNow()
 });
 
-export const storageLocations = pgTable("storage_locations", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  sortOrder: integer("sort_order").default(999),
-  createdAt: timestamp("created_at").defaultNow()
+export const storageLocations = table("storage_locations", {
+  id: t.pk("id"),
+  name: t.text("name").notNull().unique(),
+  sortOrder: t.int("sort_order").default(999),
+  createdAt: t.timestamp("created_at").defaultNow()
 });
 
 // Insert-Schemas für die neuen Listen
@@ -294,12 +294,12 @@ export type InsertStorageLocation = z.infer<typeof insertStorageLocationSchema>;
 export type StorageLocation = typeof storageLocations.$inferSelect;
 
 // User sharing settings
-export const userSharing = pgTable("user_sharing", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  materialId: integer("material_id").references(() => materials.id, { onDelete: "cascade" }),
-  isPublic: boolean("is_public").default(false),
-  createdAt: timestamp("created_at").defaultNow()
+export const userSharing = table("user_sharing", {
+  id: t.pk("id"),
+  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }).notNull(),
+  materialId: t.fk("material_id", () => materials.id, { onDelete: "cascade" }),
+  isPublic: t.bool("is_public").default(false),
+  createdAt: t.timestamp("created_at").defaultNow()
 });
 
 export const insertUserSharingSchema = createInsertSchema(userSharing).omit({
@@ -311,17 +311,17 @@ export type InsertUserSharing = z.infer<typeof insertUserSharingSchema>;
 export type UserSharing = typeof userSharing.$inferSelect;
 
 // Singleton row (id fixed to 1) holding the admin-configured SMTP settings
-export const emailSettings = pgTable("email_settings", {
-  id: integer("id").primaryKey().default(1),
-  enabled: boolean("enabled").default(false),
-  smtpHost: text("smtp_host"),
-  smtpPort: integer("smtp_port"),
-  smtpUser: text("smtp_user"),
-  smtpPassword: text("smtp_password"),
-  smtpSecure: boolean("smtp_secure").default(true),
-  fromEmail: text("from_email"),
-  fromName: text("from_name"),
-  updatedAt: timestamp("updated_at").defaultNow(),
+export const emailSettings = table("email_settings", {
+  id: t.int("id").primaryKey().default(1),
+  enabled: t.bool("enabled").default(false),
+  smtpHost: t.text("smtp_host"),
+  smtpPort: t.int("smtp_port"),
+  smtpUser: t.text("smtp_user"),
+  smtpPassword: t.text("smtp_password"),
+  smtpSecure: t.bool("smtp_secure").default(true),
+  fromEmail: t.text("from_email"),
+  fromName: t.text("from_name"),
+  updatedAt: t.timestamp("updated_at").defaultNow(),
 });
 
 export const updateEmailSettingsSchema = createInsertSchema(emailSettings).omit({
@@ -344,16 +344,16 @@ export const catalogRequestEntityTypes = [
   "storageLocation",
 ] as const;
 
-export const catalogRequests = pgTable("catalog_requests", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  entityType: text("entity_type").notNull(), // one of catalogRequestEntityTypes
-  payload: jsonb("payload").notNull(), // e.g. {name} | {name, code} | {value}
-  status: text("status").notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
-  reviewNote: text("review_note"),
-  reviewedBy: integer("reviewed_by").references(() => users.id),
-  reviewedAt: timestamp("reviewed_at"),
-  createdAt: timestamp("created_at").defaultNow(),
+export const catalogRequests = table("catalog_requests", {
+  id: t.pk("id"),
+  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }).notNull(),
+  entityType: t.text("entity_type").notNull(), // one of catalogRequestEntityTypes
+  payload: t.json("payload").notNull(), // e.g. {name} | {name, code} | {value}
+  status: t.text("status").notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
+  reviewNote: t.text("review_note"),
+  reviewedBy: t.fk("reviewed_by", () => users.id),
+  reviewedAt: t.timestamp("reviewed_at"),
+  createdAt: t.timestamp("created_at").defaultNow(),
 });
 
 export const insertCatalogRequestSchema = z.object({
@@ -366,15 +366,15 @@ export type CatalogRequest = typeof catalogRequests.$inferSelect;
 
 // Records every change to a filament's remainingPercentage, so "how much did
 // I use and when" is answerable without the user having tracked it manually.
-export const filamentUsageLog = pgTable("filament_usage_log", {
-  id: serial("id").primaryKey(),
-  filamentId: integer("filament_id").notNull().references(() => filaments.id, { onDelete: "cascade" }),
-  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  deltaWeight: numeric("delta_weight").notNull(), // grams; negative = consumed, positive = corrected/refilled
-  remainingPercentageAfter: numeric("remaining_percentage_after").notNull(),
-  note: text("note"),
-  source: text("source").notNull().default("manual"), // 'manual' | 'printer'
-  createdAt: timestamp("created_at").defaultNow(),
+export const filamentUsageLog = table("filament_usage_log", {
+  id: t.pk("id"),
+  filamentId: t.fk("filament_id", () => filaments.id, { onDelete: "cascade" }).notNull(),
+  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }).notNull(),
+  deltaWeight: t.numeric("delta_weight").notNull(), // grams; negative = consumed, positive = corrected/refilled
+  remainingPercentageAfter: t.numeric("remaining_percentage_after").notNull(),
+  note: t.text("note"),
+  source: t.text("source").notNull().default("manual"), // 'manual' | 'printer'
+  createdAt: t.timestamp("created_at").defaultNow(),
 });
 
 export type FilamentUsageLog = typeof filamentUsageLog.$inferSelect;
@@ -384,13 +384,13 @@ export type FilamentUsageLog = typeof filamentUsageLog.$inferSelect;
 // filaments.customFieldValues, keyed by this definition's id.
 export const customFieldFieldTypes = ["text", "number", "boolean", "date"] as const;
 
-export const customFieldDefinitions = pgTable("custom_field_definitions", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  entityType: text("entity_type").notNull().default("filament"), // only 'filament' for now
-  name: text("name").notNull(),
-  fieldType: text("field_type").notNull(), // one of customFieldFieldTypes
-  createdAt: timestamp("created_at").defaultNow(),
+export const customFieldDefinitions = table("custom_field_definitions", {
+  id: t.pk("id"),
+  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }).notNull(),
+  entityType: t.text("entity_type").notNull().default("filament"), // only 'filament' for now
+  name: t.text("name").notNull(),
+  fieldType: t.text("field_type").notNull(), // one of customFieldFieldTypes
+  createdAt: t.timestamp("created_at").defaultNow(),
 });
 
 export const insertCustomFieldDefinitionSchema = createInsertSchema(customFieldDefinitions).omit({
@@ -408,18 +408,18 @@ export type CustomFieldDefinition = typeof customFieldDefinitions.$inferSelect;
 // (https://github.com/Donkie/SpoolmanDB, MIT licensed), refreshed by an
 // admin action rather than a live external API call per search. One row per
 // manufacturer/product/color combination.
-export const communityFilamentCache = pgTable("community_filament_cache", {
-  id: serial("id").primaryKey(),
-  manufacturer: text("manufacturer").notNull(),
-  material: text("material").notNull(),
-  name: text("name").notNull(),
-  colorName: text("color_name").notNull(),
-  colorCode: text("color_code"),
-  density: numeric("density"),
-  diameter: numeric("diameter"),
-  extruderTemp: integer("extruder_temp"),
-  bedTemp: integer("bed_temp"),
-  updatedAt: timestamp("updated_at").defaultNow(),
+export const communityFilamentCache = table("community_filament_cache", {
+  id: t.pk("id"),
+  manufacturer: t.text("manufacturer").notNull(),
+  material: t.text("material").notNull(),
+  name: t.text("name").notNull(),
+  colorName: t.text("color_name").notNull(),
+  colorCode: t.text("color_code"),
+  density: t.numeric("density"),
+  diameter: t.numeric("diameter"),
+  extruderTemp: t.int("extruder_temp"),
+  bedTemp: t.int("bed_temp"),
+  updatedAt: t.timestamp("updated_at").defaultNow(),
 });
 
 export type CommunityFilamentCacheEntry = typeof communityFilamentCache.$inferSelect;
@@ -428,13 +428,13 @@ export type CommunityFilamentCacheEntry = typeof communityFilamentCache.$inferSe
 // can't hold a user's login cookie). tokenHash is a SHA-256 digest of the
 // plaintext token - looked up directly, not bcrypt-compared, since the
 // token itself is high-entropy random data rather than a user-chosen password.
-export const apiTokens = pgTable("api_tokens", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  tokenHash: text("token_hash").notNull().unique(),
-  label: text("label"),
-  createdAt: timestamp("created_at").defaultNow(),
-  lastUsedAt: timestamp("last_used_at"),
+export const apiTokens = table("api_tokens", {
+  id: t.pk("id"),
+  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }).notNull(),
+  tokenHash: t.text("token_hash").notNull().unique(),
+  label: t.text("label"),
+  createdAt: t.timestamp("created_at").defaultNow(),
+  lastUsedAt: t.timestamp("last_used_at"),
 });
 
 export type ApiToken = typeof apiTokens.$inferSelect;
