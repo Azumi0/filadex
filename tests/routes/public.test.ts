@@ -12,6 +12,7 @@ import request from "supertest";
 import type { Express } from "express";
 import { registerAuthRoutes } from "../../server/routes/auth";
 import { registerPublicRoutes } from "../../server/routes/public";
+import { registerUserRoutes } from "../../server/routes/users";
 import { storage } from "../../server/storage";
 import { createApp, registerAndVerify } from "../helpers/app";
 
@@ -276,5 +277,33 @@ describe("GET /api/sharing", () => {
     const response = await request(app).get("/api/sharing").set("Cookie", bobCookie);
 
     expect(response.body).toEqual([]);
+  });
+});
+
+describe("switching sharing off through /api/user-sharing", () => {
+  // KNOWN BUG (recorded, not fixed): /api/user-sharing cannot clear an existing
+  // global share (its delete matches material_id = NULL, which is never true),
+  // so it leaves the old isPublic:true row behind. This endpoint only asks
+  // whether *any* public row exists, so the collection stays public after the
+  // owner has switched sharing off.
+  it("leaves the collection public", async () => {
+    const withUserRoutes = createApp(registerAuthRoutes, registerPublicRoutes, registerUserRoutes);
+    await giveAliceASpoolOf("PLA");
+
+    await request(withUserRoutes)
+      .post("/api/user-sharing")
+      .set("Cookie", aliceCookie)
+      .send({ isPublic: true })
+      .expect(201);
+    await request(withUserRoutes)
+      .post("/api/user-sharing")
+      .set("Cookie", aliceCookie)
+      .send({ isPublic: false })
+      .expect(201);
+
+    const response = await request(withUserRoutes).get(`/api/public/filaments/${aliceId}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.filaments).toHaveLength(1);
   });
 });
