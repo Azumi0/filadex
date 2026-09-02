@@ -162,11 +162,19 @@ describe("drying reminders", () => {
     expect(mailbox).toHaveLength(0);
   });
 
-  // The hygroscopic list is matched against the filament's free-text material
-  // by exact string equality, so a spool entered as "pla" is not recognised as
-  // the catalog's "PLA".
-  it("does not recognise a material whose case differs from the catalog", async () => {
+  // The hygroscopic list is matched against the filament's free-text material,
+  // so the comparison has to ignore case for a spool entered as "pla" to count
+  // as the catalog's "PLA".
+  it("recognises a material whose case differs from the catalog", async () => {
     await giveSpool(aliceId, { name: "Lowercase pla", material: "pla", lastDryingDate: daysAgo(400) });
+
+    await runScheduledChecks();
+
+    expect(mailbox.at(-1)?.html).toContain("Lowercase pla");
+  });
+
+  it("still ignores a material that is not in the hygroscopic list at all", async () => {
+    await giveSpool(aliceId, { name: "Not hygroscopic", material: "abs", lastDryingDate: daysAgo(400) });
 
     await runScheduledChecks();
 
