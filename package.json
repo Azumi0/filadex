@@ -11,9 +11,12 @@
     "check": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:init": "tsx init-data.ts",
     "db:seed": "tsx scripts/seed-demo-data.ts",
+    "db:verify-upgrade": "tsx scripts/verify-upgrade.ts",
     "setup": "bash scripts/setup-local.sh",
     "lint": "tsc --noEmit",
     "type-check": "tsc --noEmit"

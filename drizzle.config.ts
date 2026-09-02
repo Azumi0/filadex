@@ -5,7 +5,9 @@ if (!process.env.DATABASE_URL) {
 }
 
 export default defineConfig({
-  out: "./migrations",
+  // Generated SQL migrations. The imperative migrations/*.ts scripts alongside
+  // this directory are the legacy upgrade path; see scripts/migrate.ts.
+  out: "./migrations/pg",
   schema: "./shared/schema.ts",
   dialect: "postgresql",
   dbCredentials: {

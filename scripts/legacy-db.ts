@@ -10,39 +10,11 @@
  *
  * Requires Docker.
  */
-import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
+import { LEGACY_MIGRATIONS, entrypointSchemaSql } from "./legacy-migrations";
 
-/**
- * The CREATE TABLE block docker-entrypoint.sh feeds to psql, read straight out
- * of the script: everything from the CREATE SCHEMA line to the quote that
- * closes the psql -c argument.
- */
-export function entrypointSchemaSql(): string {
-  const script = readFileSync("docker-entrypoint.sh", "utf8").split("\n");
-  const start = script.findIndex((line) => line.includes("CREATE SCHEMA IF NOT EXISTS public;"));
-  if (start === -1) throw new Error("docker-entrypoint.sh: CREATE SCHEMA block not found");
-  const end = script.findIndex((line, i) => i > start && line.trim() === '"');
-  if (end === -1) throw new Error("docker-entrypoint.sh: end of the psql -c argument not found");
-  return script.slice(start, end).join("\n");
-}
-
-/** The migrations docker-entrypoint.sh runs, in the order it runs them. */
-export const MIGRATIONS = [
-  "run-migration.ts",
-  "migrations/add_email_rbac_and_settings.ts",
-  "migrations/add_filament_usage_log.ts",
-  "migrations/add_material_density.ts",
-  "migrations/add_notification_preferences.ts",
-  "migrations/add_custom_fields.ts",
-  "migrations/add_community_filament_cache.ts",
-  "migrations/add_api_tokens.ts",
-  "migrations/add_filament_types.ts",
-  "migrations/drop_filament_type_columns.ts",
-  "migrations/add_user_theme_preferences.ts",
-];
 
 export async function buildLegacyDatabase() {
   const container = await new PostgreSqlContainer("postgres:15-alpine").start();
@@ -51,7 +23,7 @@ export async function buildLegacyDatabase() {
 
   await pool.query(entrypointSchemaSql());
 
-  for (const migration of MIGRATIONS) {
+  for (const migration of LEGACY_MIGRATIONS) {
     const result = spawnSync("npx", ["tsx", migration], {
       env: { ...process.env, DATABASE_URL: url },
       encoding: "utf8",
@@ -78,6 +50,9 @@ export async function describeSchema(pool: pg.Pool): Promise<string> {
     LEFT JOIN information_schema.key_column_usage kcu
       ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
     WHERE tc.table_schema='public'
+      -- Postgres's internal NOT NULL checks are named after table OIDs, so they
+      -- differ between any two databases and say nothing about the schema.
+      AND tc.constraint_name !~ '^[0-9]+_[0-9]+_[0-9]+_not_null$'
     GROUP BY tc.table_name, tc.constraint_type, tc.constraint_name
     ORDER BY tc.table_name, tc.constraint_type, tc.constraint_name`);
 
