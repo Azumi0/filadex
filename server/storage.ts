@@ -10,7 +10,13 @@ import {
   customFieldDefinitions, type CustomFieldDefinition, type InsertCustomFieldDefinition,
   apiTokens, type ApiToken
 } from "@shared/schema";
-import { users, type User, userSharing, type UserSharing } from "@shared/schema";
+import {
+  users, type User,
+  userSharing, type UserSharing,
+  catalogRequests, type CatalogRequest,
+  communityFilamentCache, type CommunityFilamentCacheEntry,
+  emailSettings, type EmailSettings,
+} from "@shared/schema";
 import { db } from "./db";
 import { eq, sql, and, inArray, desc, isNull, count } from "drizzle-orm";
 import { logger } from "./utils/logger";
@@ -63,6 +69,51 @@ export type UserChanges = {
   isAdmin?: boolean;
   role?: string;
   forceChangePassword?: boolean;
+};
+
+export type EmailSettingsChanges = Partial<Omit<typeof emailSettings.$inferInsert, "id" | "updatedAt">>;
+
+export type NewCommunityFilament = typeof communityFilamentCache.$inferInsert;
+
+export type CommunityFilamentCacheStatus = {
+  count: number;
+  lastUpdated: string | null;
+};
+
+/** A queued catalog request as an admin sees it: named requester, no user id. */
+export type CatalogRequestForReview = {
+  id: number;
+  entityType: string;
+  payload: unknown;
+  status: string;
+  reviewNote: string | null;
+  reviewedAt: Date | null;
+  createdAt: Date | null;
+  requestedBy: string | null;
+};
+
+export type CatalogRequestReview = {
+  status: "approved" | "rejected";
+  reviewedBy: number;
+  reviewNote?: string | null;
+};
+
+/**
+ * A user's theme. `radius` is a numeric column, so it is carried as a string
+ * both ways - the same contract the rest of the app's numerics use.
+ */
+export type UserTheme = {
+  variant: string | null;
+  primary: string | null;
+  appearance: string | null;
+  radius: string | null;
+};
+
+export type ThemeChanges = {
+  variant?: string;
+  primary?: string;
+  appearance?: string;
+  radius?: string;
 };
 
 /** The outcome of upsertUserSharing - `created` decides 201 versus 200. */
@@ -193,6 +244,38 @@ export interface IStorage {
   countAdmins(): Promise<number>;
   /** Writes whichever preferences were supplied; no-ops when none were. */
   updateUserPreferences(userId: number, preferences: UserPreferences): Promise<void>;
+  getUserTheme(userId: number): Promise<UserTheme | undefined>;
+  /** Writes whichever parts of the theme were supplied; no-ops when none were. */
+  updateUserTheme(userId: number, theme: ThemeChanges): Promise<void>;
+
+  // Scheduled notification checks
+  /** Everyone who could receive a notification email. */
+  getVerifiedUsers(): Promise<User[]>;
+  /** Names of the catalog materials that absorb moisture, for drying reminders. */
+  getHygroscopicMaterialNames(): Promise<string[]>;
+  markLowStockNotified(filamentIds: number[]): Promise<void>;
+  markDryingReminderNotified(filamentIds: number[]): Promise<void>;
+
+  // Catalog requests
+  createCatalogRequest(userId: number, entityType: string, payload: unknown): Promise<CatalogRequest>;
+  /** The review queue, newest first, with the requester's name resolved. */
+  listCatalogRequests(status?: string): Promise<CatalogRequestForReview[]>;
+  getCatalogRequestsByUser(userId: number): Promise<CatalogRequest[]>;
+  /** Only returns a request still awaiting review, so a second review cannot land. */
+  getPendingCatalogRequest(id: number): Promise<CatalogRequest | undefined>;
+  reviewCatalogRequest(id: number, review: CatalogRequestReview): Promise<CatalogRequest | undefined>;
+
+  // Community filament cache (mirrored from SpoolmanDB)
+  /** Case-insensitive substring match over manufacturer, product name and colour. */
+  searchCommunityFilaments(query: string, limit: number): Promise<CommunityFilamentCacheEntry[]>;
+  /** Swaps the whole cache for a fresh set, atomically. */
+  replaceCommunityFilaments(entries: NewCommunityFilament[]): Promise<void>;
+  getCommunityFilamentCacheStatus(): Promise<CommunityFilamentCacheStatus>;
+
+  // Email settings (a single row)
+  getEmailSettings(): Promise<EmailSettings | undefined>;
+  /** Writes the settings row a migration seeds; undefined if it is not there. */
+  updateEmailSettings(changes: EmailSettingsChanges): Promise<EmailSettings | undefined>;
 
   // Sharing settings
   getUserSharing(userId: number): Promise<UserSharing[]>;
@@ -205,6 +288,7 @@ export interface IStorage {
 
   // Filament operations
   getFilaments(userId: number): Promise<Filament[]>;
+  /** UNUSED - see the note on the implementation, and TODO.md. */
   getPublicFilamentsWithUser(userId: number, filterFn?: (filament: Filament) => boolean): Promise<{filaments: Filament[], user: {id: number, username: string}}>;
   getFilament(id: number, userId: number): Promise<Filament | undefined>;
   createFilament(filament: InsertFilament): Promise<Filament>;
@@ -395,6 +479,144 @@ export class DatabaseStorage implements IStorage {
     await db.update(users).set(preferences).where(eq(users.id, userId));
   }
 
+  async getVerifiedUsers(): Promise<User[]> {
+    return await db.select().from(users).where(eq(users.emailVerified, true));
+  }
+
+  async getHygroscopicMaterialNames(): Promise<string[]> {
+    const rows = await db.select({ name: materials.name }).from(materials)
+      .where(eq(materials.isHygroscopic, true));
+    return rows.map((row) => row.name);
+  }
+
+  async markLowStockNotified(filamentIds: number[]): Promise<void> {
+    if (filamentIds.length === 0) return;
+    await db.update(filaments)
+      .set({ lowStockNotifiedAt: new Date() })
+      .where(inArray(filaments.id, filamentIds));
+  }
+
+  async markDryingReminderNotified(filamentIds: number[]): Promise<void> {
+    if (filamentIds.length === 0) return;
+    await db.update(filaments)
+      .set({ dryingReminderNotifiedAt: new Date() })
+      .where(inArray(filaments.id, filamentIds));
+  }
+
+  async createCatalogRequest(userId: number, entityType: string, payload: unknown): Promise<CatalogRequest> {
+    const [created] = await db.insert(catalogRequests)
+      .values({ userId, entityType, payload })
+      .returning();
+    return created;
+  }
+
+  async listCatalogRequests(status?: string): Promise<CatalogRequestForReview[]> {
+    return await db
+      .select({
+        id: catalogRequests.id,
+        entityType: catalogRequests.entityType,
+        payload: catalogRequests.payload,
+        status: catalogRequests.status,
+        reviewNote: catalogRequests.reviewNote,
+        reviewedAt: catalogRequests.reviewedAt,
+        createdAt: catalogRequests.createdAt,
+        requestedBy: users.username,
+      })
+      .from(catalogRequests)
+      .leftJoin(users, eq(catalogRequests.userId, users.id))
+      .where(status ? eq(catalogRequests.status, status) : undefined)
+      .orderBy(desc(catalogRequests.createdAt));
+  }
+
+  async getCatalogRequestsByUser(userId: number): Promise<CatalogRequest[]> {
+    return await db.select().from(catalogRequests)
+      .where(eq(catalogRequests.userId, userId))
+      .orderBy(desc(catalogRequests.createdAt));
+  }
+
+  async getPendingCatalogRequest(id: number): Promise<CatalogRequest | undefined> {
+    const [request] = await db.select().from(catalogRequests)
+      .where(and(eq(catalogRequests.id, id), eq(catalogRequests.status, "pending")));
+    return request || undefined;
+  }
+
+  async reviewCatalogRequest(id: number, review: CatalogRequestReview): Promise<CatalogRequest | undefined> {
+    const [updated] = await db.update(catalogRequests)
+      .set({ ...review, reviewedAt: new Date() })
+      .where(eq(catalogRequests.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async searchCommunityFilaments(query: string, limit: number): Promise<CommunityFilamentCacheEntry[]> {
+    // The wildcards are stripped rather than escaped, so a query cannot widen
+    // its own pattern.
+    const pattern = `%${query.replace(/[%_]/g, "")}%`;
+    return await db.select().from(communityFilamentCache)
+      .where(sql`(${communityFilamentCache.manufacturer} ILIKE ${pattern}
+        OR ${communityFilamentCache.name} ILIKE ${pattern}
+        OR ${communityFilamentCache.colorName} ILIKE ${pattern})`)
+      .limit(limit);
+  }
+
+  async replaceCommunityFilaments(entries: NewCommunityFilament[]): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`TRUNCATE TABLE community_filament_cache`);
+      if (entries.length > 0) {
+        // Insert in chunks to stay well under typical parameter-count limits
+        const CHUNK_SIZE = 500;
+        for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+          await tx.insert(communityFilamentCache).values(entries.slice(i, i + CHUNK_SIZE));
+        }
+      }
+    });
+  }
+
+  async getCommunityFilamentCacheStatus(): Promise<CommunityFilamentCacheStatus> {
+    const [row] = await db.select({
+      count: sql<number>`count(*)`,
+      lastUpdated: sql<string | null>`max(${communityFilamentCache.updatedAt})`,
+    }).from(communityFilamentCache);
+    return { count: Number(row?.count ?? 0), lastUpdated: row?.lastUpdated ?? null };
+  }
+
+  async getEmailSettings(): Promise<EmailSettings | undefined> {
+    const [settings] = await db.select().from(emailSettings).where(eq(emailSettings.id, 1));
+    return settings || undefined;
+  }
+
+  async updateEmailSettings(changes: EmailSettingsChanges): Promise<EmailSettings | undefined> {
+    const [updated] = await db.update(emailSettings)
+      .set({ ...changes, updatedAt: new Date() })
+      .where(eq(emailSettings.id, 1))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getUserTheme(userId: number): Promise<UserTheme | undefined> {
+    const [theme] = await db.select({
+      variant: users.themeVariant,
+      primary: users.themePrimary,
+      appearance: users.themeAppearance,
+      radius: users.themeRadius,
+    }).from(users).where(eq(users.id, userId));
+    return theme || undefined;
+  }
+
+  async updateUserTheme(userId: number, theme: ThemeChanges): Promise<void> {
+    const columns: Partial<typeof users.$inferInsert> = {};
+    if (theme.variant !== undefined) columns.themeVariant = theme.variant;
+    if (theme.primary !== undefined) columns.themePrimary = theme.primary;
+    if (theme.appearance !== undefined) columns.themeAppearance = theme.appearance;
+    if (theme.radius !== undefined) columns.themeRadius = theme.radius;
+
+    if (Object.keys(columns).length === 0) {
+      return;
+    }
+
+    await db.update(users).set(columns).where(eq(users.id, userId));
+  }
+
   async getUserSharing(userId: number): Promise<UserSharing[]> {
     return await db.select().from(userSharing).where(eq(userSharing.userId, userId));
   }
@@ -447,6 +669,11 @@ export class DatabaseStorage implements IStorage {
       .where(eq(filaments.userId, userId));
   }
 
+  // UNUSED. Nothing calls this. routes/public.ts serves the public collection
+  // by composing getUser + getFilaments instead, because it has to answer 404
+  // for a missing user while this throws. Either give it a shape that route can
+  // use, or delete it - as it stands it will drift from the behaviour it
+  // duplicates. See TODO.md, Technical Debt.
   async getPublicFilamentsWithUser(userId: number, filterFn?: (filament: Filament) => boolean): Promise<{filaments: Filament[], user: {id: number, username: string}}> {
     // Get user information
     const [user] = await db.select({

@@ -1,8 +1,6 @@
 import type { Express } from "express";
-import { sql } from "drizzle-orm";
-import { db } from "../db";
-import { communityFilamentCache } from "@shared/schema";
 import { authenticate, isAdmin } from "../auth";
+import { storage } from "../storage";
 import { refreshCommunityFilamentCache, searchCommunityFilaments } from "../utils/spoolmandb-sync";
 import { logger as appLogger } from "../utils/logger";
 
@@ -23,11 +21,7 @@ export function registerCommunityFilamentRoutes(app: Express): void {
 
   app.get("/api/community-filaments/status", authenticate, isAdmin, async (_req, res) => {
     try {
-      const [row] = await db.select({
-        count: sql<number>`count(*)`,
-        lastUpdated: sql<string | null>`max(${communityFilamentCache.updatedAt})`,
-      }).from(communityFilamentCache);
-      res.json({ count: Number(row?.count ?? 0), lastUpdated: row?.lastUpdated ?? null });
+      res.json(await storage.getCommunityFilamentCacheStatus());
     } catch (error) {
       appLogger.error("Error fetching community filament cache status:", error);
       res.status(500).json({ message: "Failed to fetch community filament cache status" });

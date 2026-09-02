@@ -1,12 +1,10 @@
 import nodemailer from "nodemailer";
-import { eq } from "drizzle-orm";
-import { db } from "../db";
-import { emailSettings, type EmailSettings } from "@shared/schema";
+import { type EmailSettings } from "@shared/schema";
+import { storage } from "../storage";
 import { logger } from "./logger";
 
 export async function getEmailSettings(): Promise<EmailSettings | undefined> {
-  const [settings] = await db.select().from(emailSettings).where(eq(emailSettings.id, 1));
-  return settings;
+  return await storage.getEmailSettings();
 }
 
 interface SendMailArgs {

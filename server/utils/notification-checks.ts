@@ -1,6 +1,3 @@
-import { eq } from "drizzle-orm";
-import { db } from "../db";
-import { users, materials, filaments } from "@shared/schema";
 import { storage } from "../storage";
 import { sendMail } from "./mailer";
 import { lowStockEmail, dryingReminderEmail } from "./email-templates";
@@ -20,12 +17,8 @@ function daysAgo(dateStr: string | Date): number {
  * handler, since there's no external trigger for "check periodically".
  */
 export async function runScheduledChecks(): Promise<void> {
-  const allUsers = await db.select().from(users).where(eq(users.emailVerified, true));
-
-  const hygroscopicMaterials = await db.select({ name: materials.name })
-    .from(materials)
-    .where(eq(materials.isHygroscopic, true));
-  const hygroscopicNames = new Set(hygroscopicMaterials.map((m) => m.name));
+  const allUsers = await storage.getVerifiedUsers();
+  const hygroscopicNames = new Set(await storage.getHygroscopicMaterialNames());
 
   for (const user of allUsers) {
     if (!user.email) continue;
@@ -47,9 +40,7 @@ export async function runScheduledChecks(): Promise<void> {
         const { subject, html } = lowStockEmail(language, lowStockCandidates.map((f) => f.name));
         await sendMail({ to: user.email, subject, html });
 
-        for (const f of lowStockCandidates) {
-          await db.update(filaments).set({ lowStockNotifiedAt: new Date() }).where(eq(filaments.id, f.id));
-        }
+        await storage.markLowStockNotified(lowStockCandidates.map((f) => f.id));
         logger.info(`Sent low-stock email to user ${user.id} for ${lowStockCandidates.length} spool(s)`);
       }
     }
@@ -73,9 +64,7 @@ export async function runScheduledChecks(): Promise<void> {
         const { subject, html } = dryingReminderEmail(language, dryingCandidates.map((f) => f.name));
         await sendMail({ to: user.email, subject, html });
 
-        for (const f of dryingCandidates) {
-          await db.update(filaments).set({ dryingReminderNotifiedAt: new Date() }).where(eq(filaments.id, f.id));
-        }
+        await storage.markDryingReminderNotified(dryingCandidates.map((f) => f.id));
         logger.info(`Sent drying-reminder email to user ${user.id} for ${dryingCandidates.length} spool(s)`);
       }
     }
