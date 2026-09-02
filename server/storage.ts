@@ -18,8 +18,9 @@ import {
   emailSettings, type EmailSettings,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, sql, and, inArray, desc, isNull, count } from "drizzle-orm";
+import { eq, sql, and, or, inArray, desc, isNull, count } from "drizzle-orm";
 import { logger } from "./utils/logger";
+import { containsIgnoreCase, eqIgnoreCase } from "./db/predicates";
 
 /** What the authentication middleware needs to authorize a request. */
 export type AuthContext = {
@@ -354,7 +355,7 @@ export class DatabaseStorage implements IStorage {
 
   async getUserByUsername(username: string): Promise<User | undefined> {
     const [user] = await db.select().from(users)
-      .where(sql`LOWER(${users.username}) = LOWER(${username})`);
+      .where(eqIgnoreCase(users.username, username));
     return user || undefined;
   }
 
@@ -378,7 +379,7 @@ export class DatabaseStorage implements IStorage {
 
   async getUserByEmail(email: string): Promise<User | undefined> {
     const [user] = await db.select().from(users)
-      .where(sql`LOWER(${users.email}) = LOWER(${email})`);
+      .where(eqIgnoreCase(users.email, email));
     return user || undefined;
   }
 
@@ -549,13 +550,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async searchCommunityFilaments(query: string, limit: number): Promise<CommunityFilamentCacheEntry[]> {
-    // The wildcards are stripped rather than escaped, so a query cannot widen
-    // its own pattern.
-    const pattern = `%${query.replace(/[%_]/g, "")}%`;
     return await db.select().from(communityFilamentCache)
-      .where(sql`(${communityFilamentCache.manufacturer} ILIKE ${pattern}
-        OR ${communityFilamentCache.name} ILIKE ${pattern}
-        OR ${communityFilamentCache.colorName} ILIKE ${pattern})`)
+      .where(or(
+        containsIgnoreCase(communityFilamentCache.manufacturer, query),
+        containsIgnoreCase(communityFilamentCache.name, query),
+        containsIgnoreCase(communityFilamentCache.colorName, query),
+      ))
       .limit(limit);
   }
 
