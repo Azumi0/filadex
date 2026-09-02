@@ -1,16 +1,17 @@
-import { table, t } from "./columns";
+import { sql } from "drizzle-orm";
+import { table, t, foreignKey, index, uniqueIndex } from "./columns";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 export const users = table("users", {
   id: t.pk("id"),
-  username: t.text("username").notNull().unique(),
+  username: t.text("username").notNull().unique("users_username_key"),
   password: t.text("password").notNull(),
   isAdmin: t.bool("is_admin").default(false),
   // Source of truth for authorization; isAdmin above is kept as a mirror
   // (role === 'admin') so existing code reading isAdmin keeps working.
   role: t.text("role").notNull().default("user"), // 'admin' | 'user'
-  email: t.text("email").unique(),
+  email: t.text("email").unique("users_email_key"),
   emailVerified: t.bool("email_verified").default(false),
   emailVerificationToken: t.text("email_verification_token"),
   emailVerificationExpires: t.timestamp("email_verification_expires"),
@@ -20,8 +21,8 @@ export const users = table("users", {
   language: t.text("language").default("en"),
   currency: t.text("currency").default("EUR"),
   temperatureUnit: t.text("temperature_unit").default("C"),
-  lastLogin: t.timestamp("last_login"),
-  createdAt: t.timestamp("created_at").defaultNow(),
+  lastLogin: t.timestamptz("last_login"),
+  createdAt: t.timestamptz("created_at").defaultNow().notNull(),
   // Low-stock / drying-reminder email alert preferences (per-user, not global)
   lowStockThresholdPercent: t.int("low_stock_threshold_percent").default(15),
   notifyLowStock: t.bool("notify_low_stock").default(true),
@@ -33,7 +34,12 @@ export const users = table("users", {
   themePrimary: t.text("theme_primary").default("#EA580C"),
   themeAppearance: t.text("theme_appearance").default("dark"), // 'light' | 'dark'
   themeRadius: t.numeric("theme_radius").default("0.8"),
-});
+}, (table) => [
+  // Enforces that usernames are unique regardless of case. This is what makes
+  // the LOWER() lookups throughout the app safe: without it "Alice" and "alice"
+  // could both exist and the lookup would be ambiguous.
+  uniqueIndex("users_username_lower_idx").on(sql`lower(${table.username})`),
+]);
 
 // A filament product (vendor, material, color, diameter, print temp) defined
 // once; filaments (below) become spool instances referencing one of these,
@@ -41,7 +47,7 @@ export const users = table("users", {
 // manufacturer/material/color/diameter 5 times. See IMPLEMENTATION_PLAN.md #9.
 export const filamentTypes = table("filament_types", {
   id: t.pk("id"),
-  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }),
+  userId: t.fk("user_id"),
   manufacturer: t.text("manufacturer"),
   material: t.text("material").notNull(),
   colorName: t.text("color_name").notNull(),
@@ -49,7 +55,13 @@ export const filamentTypes = table("filament_types", {
   diameter: t.numeric("diameter"),
   printTemp: t.text("print_temp"),
   createdAt: t.timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  foreignKey({
+    name: "filament_types_user_id_fkey",
+    columns: [table.userId],
+    foreignColumns: [users.id],
+  }).onDelete("cascade"),
+]);
 
 export type FilamentType = typeof filamentTypes.$inferSelect;
 
@@ -59,8 +71,8 @@ export type FilamentType = typeof filamentTypes.$inferSelect;
 // working against the same flattened shape (see the `Filament` type below).
 export const filaments = table("filaments", {
   id: t.pk("id"),
-  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }),
-  filamentTypeId: t.fk("filament_type_id", () => filamentTypes.id).notNull(),
+  userId: t.fk("user_id"),
+  filamentTypeId: t.fk("filament_type_id").notNull(),
   name: t.text("name").notNull(),
   totalWeight: t.numeric("total_weight").notNull(),
   remainingPercentage: t.numeric("remaining_percentage").notNull(),
@@ -68,7 +80,7 @@ export const filaments = table("filaments", {
   purchasePrice: t.numeric("purchase_price"), // Kaufpreis in EUR
   status: t.text("status"),  // 'sealed', 'opened'
   spoolType: t.text("spool_type"), // 'spooled', 'spoolless'
-  dryerCount: t.int("dryer_count").default(0), // Anzahl der Trocknungen
+  dryerCount: t.int("dryer_count").default(0).notNull(), // Anzahl der Trocknungen
   lastDryingDate: t.date("last_drying_date"), // Datum der letzten Trocknung
   storageLocation: t.text("storage_location"), // Lagerort
   // Set when a low-stock email is sent, cleared once remaining % rises back
@@ -79,7 +91,23 @@ export const filaments = table("filaments", {
   dryingReminderNotifiedAt: t.timestamp("drying_reminder_notified_at"),
   // Values for this user's customFieldDefinitions, keyed by definition id (as a string)
   customFieldValues: t.json<Record<string, any>>("custom_field_values").default({}),
-});
+  // Written by docker-entrypoint.sh's CREATE TABLE and never read by the
+  // application. Declared so the schema matches the deployed database; see
+  // TODO.md before removing them.
+  createdAt: t.timestamptz("created_at").defaultNow(),
+  updatedAt: t.timestamptz("updated_at").defaultNow(),
+}, (table) => [
+  foreignKey({
+    name: "filaments_user_id_fkey",
+    columns: [table.userId],
+    foreignColumns: [users.id],
+  }).onDelete("cascade"),
+  foreignKey({
+    name: "filaments_filament_type_id_fkey",
+    columns: [table.filamentTypeId],
+    foreignColumns: [filamentTypes.id],
+  }),
+]);
 
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
@@ -173,11 +201,16 @@ type FilamentTypeInsertFields = {
   printTemp?: string | null;
 };
 
-export type Filament = Omit<typeof filaments.$inferSelect, "filamentTypeId"> & FilamentTypeSelectFields & {
+// createdAt/updatedAt exist on the filaments table but are not part of the
+// API-facing shape: docker-entrypoint.sh creates them and nothing reads them.
+// See TODO.md.
+type UnusedFilamentColumns = "createdAt" | "updatedAt";
+
+export type Filament = Omit<typeof filaments.$inferSelect, "filamentTypeId" | UnusedFilamentColumns> & FilamentTypeSelectFields & {
   filamentTypeId: number;
 };
 
-export type InsertFilament = Omit<typeof filaments.$inferInsert, "id" | "filamentTypeId"> & FilamentTypeInsertFields;
+export type InsertFilament = Omit<typeof filaments.$inferInsert, "id" | "filamentTypeId" | UnusedFilamentColumns> & FilamentTypeInsertFields;
 
 // Bearbeiten Sie das Schema, um sicherzustellen, dass numerische Felder korrekt konvertiert werden
 // Schema für das Einfügen von Filaments ohne Transformation
@@ -209,38 +242,38 @@ export const insertFilamentSchema = baseInsertFilamentSchema.transform((data) =>
 // Neue Listen für die Einstellungen
 export const manufacturers = table("manufacturers", {
   id: t.pk("id"),
-  name: t.text("name").notNull().unique(),
+  name: t.text("name").notNull().unique("manufacturers_name_key"),
   sortOrder: t.int("sort_order").default(999),
-  createdAt: t.timestamp("created_at").defaultNow()
+  createdAt: t.timestamptz("created_at").defaultNow().notNull()
 });
 
 export const materials = table("materials", {
   id: t.pk("id"),
-  name: t.text("name").notNull().unique(),
+  name: t.text("name").notNull().unique("materials_name_key"),
   sortOrder: t.int("sort_order").default(999),
   density: t.numeric("density"), // g/cm^3; lets weight<->length conversions work without an external lookup
   isHygroscopic: t.bool("is_hygroscopic").default(false), // drives the drying-reminder email check
-  createdAt: t.timestamp("created_at").defaultNow()
+  createdAt: t.timestamptz("created_at").defaultNow().notNull()
 });
 
 export const colors = table("colors", {
   id: t.pk("id"),
   name: t.text("name").notNull(),
   code: t.text("code").notNull(),
-  createdAt: t.timestamp("created_at").defaultNow()
+  createdAt: t.timestamptz("created_at").defaultNow().notNull()
 });
 
 export const diameters = table("diameters", {
   id: t.pk("id"),
-  value: t.numeric("value").notNull().unique(),
-  createdAt: t.timestamp("created_at").defaultNow()
+  value: t.numeric("value").notNull().unique("diameters_value_key"),
+  createdAt: t.timestamptz("created_at").defaultNow().notNull()
 });
 
 export const storageLocations = table("storage_locations", {
   id: t.pk("id"),
-  name: t.text("name").notNull().unique(),
+  name: t.text("name").notNull().unique("storage_locations_name_key"),
   sortOrder: t.int("sort_order").default(999),
-  createdAt: t.timestamp("created_at").defaultNow()
+  createdAt: t.timestamptz("created_at").defaultNow().notNull()
 });
 
 // Insert-Schemas für die neuen Listen
@@ -296,11 +329,22 @@ export type StorageLocation = typeof storageLocations.$inferSelect;
 // User sharing settings
 export const userSharing = table("user_sharing", {
   id: t.pk("id"),
-  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }).notNull(),
-  materialId: t.fk("material_id", () => materials.id, { onDelete: "cascade" }),
+  userId: t.fk("user_id").notNull(),
+  materialId: t.fk("material_id"),
   isPublic: t.bool("is_public").default(false),
-  createdAt: t.timestamp("created_at").defaultNow()
-});
+  createdAt: t.timestamptz("created_at").defaultNow().notNull()
+}, (table) => [
+  foreignKey({
+    name: "user_sharing_user_id_fkey",
+    columns: [table.userId],
+    foreignColumns: [users.id],
+  }).onDelete("cascade"),
+  foreignKey({
+    name: "user_sharing_material_id_fkey",
+    columns: [table.materialId],
+    foreignColumns: [materials.id],
+  }).onDelete("cascade"),
+]);
 
 export const insertUserSharingSchema = createInsertSchema(userSharing).omit({
   id: true,
@@ -346,15 +390,26 @@ export const catalogRequestEntityTypes = [
 
 export const catalogRequests = table("catalog_requests", {
   id: t.pk("id"),
-  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }).notNull(),
+  userId: t.fk("user_id").notNull(),
   entityType: t.text("entity_type").notNull(), // one of catalogRequestEntityTypes
   payload: t.json("payload").notNull(), // e.g. {name} | {name, code} | {value}
   status: t.text("status").notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
   reviewNote: t.text("review_note"),
-  reviewedBy: t.fk("reviewed_by", () => users.id),
+  reviewedBy: t.fk("reviewed_by"),
   reviewedAt: t.timestamp("reviewed_at"),
   createdAt: t.timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  foreignKey({
+    name: "catalog_requests_user_id_fkey",
+    columns: [table.userId],
+    foreignColumns: [users.id],
+  }).onDelete("cascade"),
+  foreignKey({
+    name: "catalog_requests_reviewed_by_fkey",
+    columns: [table.reviewedBy],
+    foreignColumns: [users.id],
+  }),
+]);
 
 export const insertCatalogRequestSchema = z.object({
   entityType: z.enum(catalogRequestEntityTypes),
@@ -368,14 +423,26 @@ export type CatalogRequest = typeof catalogRequests.$inferSelect;
 // I use and when" is answerable without the user having tracked it manually.
 export const filamentUsageLog = table("filament_usage_log", {
   id: t.pk("id"),
-  filamentId: t.fk("filament_id", () => filaments.id, { onDelete: "cascade" }).notNull(),
-  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }).notNull(),
+  filamentId: t.fk("filament_id").notNull(),
+  userId: t.fk("user_id").notNull(),
   deltaWeight: t.numeric("delta_weight").notNull(), // grams; negative = consumed, positive = corrected/refilled
   remainingPercentageAfter: t.numeric("remaining_percentage_after").notNull(),
   note: t.text("note"),
   source: t.text("source").notNull().default("manual"), // 'manual' | 'printer'
   createdAt: t.timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  foreignKey({
+    name: "filament_usage_log_filament_id_fkey",
+    columns: [table.filamentId],
+    foreignColumns: [filaments.id],
+  }).onDelete("cascade"),
+  foreignKey({
+    name: "filament_usage_log_user_id_fkey",
+    columns: [table.userId],
+    foreignColumns: [users.id],
+  }).onDelete("cascade"),
+  index("filament_usage_log_filament_id_idx").on(table.filamentId),
+]);
 
 export type FilamentUsageLog = typeof filamentUsageLog.$inferSelect;
 
@@ -386,12 +453,18 @@ export const customFieldFieldTypes = ["text", "number", "boolean", "date"] as co
 
 export const customFieldDefinitions = table("custom_field_definitions", {
   id: t.pk("id"),
-  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }).notNull(),
+  userId: t.fk("user_id").notNull(),
   entityType: t.text("entity_type").notNull().default("filament"), // only 'filament' for now
   name: t.text("name").notNull(),
   fieldType: t.text("field_type").notNull(), // one of customFieldFieldTypes
   createdAt: t.timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  foreignKey({
+    name: "custom_field_definitions_user_id_fkey",
+    columns: [table.userId],
+    foreignColumns: [users.id],
+  }).onDelete("cascade"),
+]);
 
 export const insertCustomFieldDefinitionSchema = createInsertSchema(customFieldDefinitions).omit({
   id: true,
@@ -420,7 +493,9 @@ export const communityFilamentCache = table("community_filament_cache", {
   extruderTemp: t.int("extruder_temp"),
   bedTemp: t.int("bed_temp"),
   updatedAt: t.timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("community_filament_cache_search_idx").on(table.manufacturer, table.name, table.colorName),
+]);
 
 export type CommunityFilamentCacheEntry = typeof communityFilamentCache.$inferSelect;
 
@@ -430,12 +505,18 @@ export type CommunityFilamentCacheEntry = typeof communityFilamentCache.$inferSe
 // token itself is high-entropy random data rather than a user-chosen password.
 export const apiTokens = table("api_tokens", {
   id: t.pk("id"),
-  userId: t.fk("user_id", () => users.id, { onDelete: "cascade" }).notNull(),
-  tokenHash: t.text("token_hash").notNull().unique(),
+  userId: t.fk("user_id").notNull(),
+  tokenHash: t.text("token_hash").notNull().unique("api_tokens_token_hash_key"),
   label: t.text("label"),
   createdAt: t.timestamp("created_at").defaultNow(),
   lastUsedAt: t.timestamp("last_used_at"),
-});
+}, (table) => [
+  foreignKey({
+    name: "api_tokens_user_id_fkey",
+    columns: [table.userId],
+    foreignColumns: [users.id],
+  }).onDelete("cascade"),
+]);
 
 export type ApiToken = typeof apiTokens.$inferSelect;
 

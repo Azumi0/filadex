@@ -8,6 +8,9 @@ import {
   date,
   timestamp,
   jsonb,
+  foreignKey,
+  index,
+  uniqueIndex,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
@@ -44,6 +47,17 @@ import {
 /** Defines a table. Named separately from the column helpers because it takes the dialect's table builder. */
 export const table = pgTable;
 
+/**
+ * Table-level constructs, re-exported so shared/schema.ts imports only from
+ * this file and stays free of any direct dependency on one dialect.
+ *
+ * Foreign keys are declared here rather than with `.references()` on the column
+ * because only this form can name the constraint, and the names matter: the
+ * deployed databases got Postgres's default `<table>_<column>_fkey`, and a
+ * migration that assumes a different name would not find the constraint.
+ */
+export { foreignKey, index, uniqueIndex };
+
 /** A column reference, for foreign keys. */
 export type ColumnRef = () => AnyPgColumn;
 
@@ -63,8 +77,19 @@ export const t = {
   /** Exact decimal, carried as a string so it never loses precision to a float. */
   numeric: (name: string) => numeric(name),
 
-  /** A moment in time. */
+  /** A moment in time, stored without a zone. */
   timestamp: (name: string) => timestamp(name),
+
+  /**
+   * A moment in time, stored with its zone.
+   *
+   * Both spellings exist because the deployed databases contain both: the
+   * tables docker-entrypoint.sh creates use `timestamp with time zone`, while
+   * everything added later by the migration scripts does not. Narrowing the
+   * former to a plain timestamp would discard each value's offset and
+   * reinterpret it in the server's local zone, so the distinction is kept.
+   */
+  timestamptz: (name: string) => timestamp(name, { withTimezone: true }),
 
   /** A calendar day with no time of day, carried as a YYYY-MM-DD string. */
   date: (name: string) => date(name),
@@ -72,7 +97,9 @@ export const t = {
   /** A structured value stored whole. */
   json: <T>(name: string) => jsonb(name).$type<T>(),
 
-  /** Foreign key to another table's primary key. */
-  fk: (name: string, references: ColumnRef, options?: { onDelete?: "cascade" }) =>
-    integer(name).references(references, options),
+  /**
+   * A column holding another table's primary key. The constraint itself is
+   * declared in the table's extras with `foreignKey`, so it can be named.
+   */
+  fk: (name: string) => integer(name),
 };
