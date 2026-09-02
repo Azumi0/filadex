@@ -1,22 +1,22 @@
 import type { Express } from "express";
-import { eq, count, sql, isNull } from "drizzle-orm";
-import { db } from "../db";
-import { users, userSharing, adminCreateUserSchema } from "../../shared/schema";
+import { type User, adminCreateUserSchema } from "../../shared/schema";
 import { authenticate, isAdmin, hashPassword } from "../auth";
+import { storage, type UserChanges, type UserPreferences } from "../storage";
 import { logger as appLogger } from "../utils/logger";
-import { and } from "drizzle-orm";
 
-// The shape PUT /api/users/:id answers with, shared between the update and the
-// no-op path so the two cannot return different fields.
-const updatedUserFields = {
-  id: users.id,
-  username: users.username,
-  isAdmin: users.isAdmin,
-  role: users.role,
-  forceChangePassword: users.forceChangePassword,
-  createdAt: users.createdAt,
-  lastLogin: users.lastLogin,
-};
+// What the admin endpoints say about a user. Never the password hash, and the
+// same fields whether the user was just changed or not.
+function managedUser(user: User) {
+  return {
+    id: user.id,
+    username: user.username,
+    isAdmin: user.isAdmin,
+    role: user.role,
+    forceChangePassword: user.forceChangePassword,
+    createdAt: user.createdAt,
+    lastLogin: user.lastLogin,
+  };
+}
 
 export function registerUserRoutes(app: Express): void {
   // Update user language preference
@@ -29,10 +29,7 @@ export function registerUserRoutes(app: Express): void {
         return res.status(400).json({ message: "Invalid language. Supported languages are 'en' and 'de'." });
       }
 
-      // Update user language
-      await db.update(users)
-        .set({ language })
-        .where(eq(users.id, req.userId));
+      await storage.updateUserPreferences(req.userId, { language });
 
       res.json({ message: "Language preference updated successfully" });
     } catch (error) {
@@ -46,7 +43,7 @@ export function registerUserRoutes(app: Express): void {
     try {
       const { currency, temperatureUnit } = req.body;
 
-      const updateData: any = {};
+      const updateData: UserPreferences = {};
 
       // Validate and update currency
       if (currency) {
@@ -65,12 +62,7 @@ export function registerUserRoutes(app: Express): void {
         updateData.temperatureUnit = temperatureUnit;
       }
 
-      // Update user units
-      if (Object.keys(updateData).length > 0) {
-        await db.update(users)
-          .set(updateData)
-          .where(eq(users.id, req.userId));
-      }
+      await storage.updateUserPreferences(req.userId, updateData);
 
       res.json({ message: "Units preferences updated successfully" });
     } catch (error) {
@@ -83,7 +75,7 @@ export function registerUserRoutes(app: Express): void {
   app.post("/api/users/notification-preferences", authenticate, async (req, res) => {
     try {
       const { lowStockThresholdPercent, notifyLowStock, notifyDryingReminder, dryingReminderDays } = req.body;
-      const updateData: any = {};
+      const updateData: UserPreferences = {};
 
       if (lowStockThresholdPercent !== undefined) {
         const value = Number(lowStockThresholdPercent);
@@ -115,9 +107,7 @@ export function registerUserRoutes(app: Express): void {
         updateData.dryingReminderDays = value;
       }
 
-      if (Object.keys(updateData).length > 0) {
-        await db.update(users).set(updateData).where(eq(users.id, req.userId));
-      }
+      await storage.updateUserPreferences(req.userId, updateData);
 
       res.json({ message: "Notification preferences updated successfully" });
     } catch (error) {
@@ -129,22 +119,7 @@ export function registerUserRoutes(app: Express): void {
   // User management routes (admin only)
   app.get("/api/users", authenticate, isAdmin, async (_req, res) => {
     try {
-      const usersList = await db.select({
-        id: users.id,
-        username: users.username,
-        isAdmin: users.isAdmin,
-        role: users.role,
-        email: users.email,
-        emailVerified: users.emailVerified,
-        forceChangePassword: users.forceChangePassword,
-        language: users.language,
-        currency: users.currency,
-        temperatureUnit: users.temperatureUnit,
-        createdAt: users.createdAt,
-        lastLogin: users.lastLogin
-      }).from(users);
-
-      res.json(usersList);
+      res.json(await storage.listUsers());
     } catch (error) {
       appLogger.error("Get users error:", error);
       res.status(500).json({ message: "Server error" });
@@ -162,9 +137,7 @@ export function registerUserRoutes(app: Express): void {
       const { username, password, isAdmin: makeAdmin, forceChangePassword } = parsed.data;
 
       // Check if username already exists (case-insensitive)
-      const existingUser = await db.select().from(users).where(sql`LOWER(${users.username}) = LOWER(${username})`);
-
-      if (existingUser.length > 0) {
+      if (await storage.getUserByUsername(username)) {
         return res.status(400).json({ message: "Username already exists" });
       }
 
@@ -174,25 +147,17 @@ export function registerUserRoutes(app: Express): void {
 
       // Create user. isAdmin/role are kept in sync - role is the source of truth
       // for authorization, isAdmin is a mirror kept for backward compatibility.
-      const [newUser] = await db.insert(users)
-        .values({
-          username,
-          password: hashedPassword,
-          isAdmin: makeAdmin || false,
-          role,
-          emailVerified: true, // admin-created accounts skip self-registration's email verification
-          forceChangePassword: forceChangePassword !== false
-        })
-        .returning({
-          id: users.id,
-          username: users.username,
-          isAdmin: users.isAdmin,
-          role: users.role,
-          forceChangePassword: users.forceChangePassword,
-          createdAt: users.createdAt
-        });
+      const newUser = await storage.createUser({
+        username,
+        password: hashedPassword,
+        isAdmin: makeAdmin || false,
+        role,
+        emailVerified: true, // admin-created accounts skip self-registration's email verification
+        forceChangePassword: forceChangePassword !== false
+      });
 
-      res.status(201).json(newUser);
+      const { lastLogin, ...created } = managedUser(newUser);
+      res.status(201).json(created);
     } catch (error) {
       appLogger.error("Create user error:", error);
       res.status(500).json({ message: "Server error" });
@@ -210,24 +175,22 @@ export function registerUserRoutes(app: Express): void {
       const { username, password, isAdmin: makeAdmin, forceChangePassword } = req.body;
 
       // Check if user exists
-      const existingUser = await db.select().from(users).where(eq(users.id, id));
+      const existingUser = await storage.getUser(id);
 
-      if (existingUser.length === 0) {
+      if (!existingUser) {
         return res.status(404).json({ message: "User not found" });
       }
 
       // Prepare update data
-      const updateData: any = {};
+      const updateData: UserChanges = {};
 
       if (username) {
         // Only a name that resolves to a different user can collide. Changing
         // just the capitalisation is this same user renaming themselves, so it
         // skips the check - but it is still applied, unlike before, when it was
         // silently dropped and left nothing to update at all.
-        if (username.toLowerCase() !== existingUser[0].username.toLowerCase()) {
-          const usernameExists = await db.select().from(users).where(sql`LOWER(${users.username}) = LOWER(${username})`);
-
-          if (usernameExists.length > 0) {
+        if (username.toLowerCase() !== existingUser.username.toLowerCase()) {
+          if (await storage.getUserByUsername(username)) {
             return res.status(400).json({ message: "Username already exists" });
           }
         }
@@ -241,9 +204,8 @@ export function registerUserRoutes(app: Express): void {
 
       if (makeAdmin !== undefined) {
         // Prevent demoting the last remaining admin - would lock everyone out of admin functions
-        if (existingUser[0].role === "admin" && !makeAdmin) {
-          const adminCount = await db.select({ count: count() }).from(users).where(eq(users.role, "admin"));
-          if (adminCount[0].count <= 1) {
+        if (existingUser.role === "admin" && !makeAdmin) {
+          if (await storage.countAdmins() <= 1) {
             return res.status(400).json({ message: "Cannot remove admin privileges from the last admin user" });
           }
         }
@@ -255,20 +217,11 @@ export function registerUserRoutes(app: Express): void {
         updateData.forceChangePassword = forceChangePassword;
       }
 
-      // Nothing to change. An UPDATE with an empty SET is a driver error, and a
-      // request that asks for no change should be a no-op, not a 500.
-      if (Object.keys(updateData).length === 0) {
-        const [unchanged] = await db.select(updatedUserFields).from(users).where(eq(users.id, id));
-        return res.json(unchanged);
-      }
+      // updateUser treats an empty change set as a no-op, so a request that asks
+      // for no change answers with the user unchanged rather than failing.
+      const updatedUser = await storage.updateUser(id, updateData);
 
-      // Update user
-      const [updatedUser] = await db.update(users)
-        .set(updateData)
-        .where(eq(users.id, id))
-        .returning(updatedUserFields);
-
-      res.json(updatedUser);
+      res.json(updatedUser && managedUser(updatedUser));
     } catch (error) {
       appLogger.error("Update user error:", error);
       res.status(500).json({ message: "Server error" });
@@ -284,23 +237,18 @@ export function registerUserRoutes(app: Express): void {
       }
 
       // Check if user exists
-      const existingUser = await db.select().from(users).where(eq(users.id, id));
+      const existingUser = await storage.getUser(id);
 
-      if (existingUser.length === 0) {
+      if (!existingUser) {
         return res.status(404).json({ message: "User not found" });
       }
 
       // Prevent deleting the last admin user
-      if (existingUser[0].role === "admin") {
-        const adminCount = await db.select({ count: count() }).from(users).where(eq(users.role, "admin"));
-
-        if (adminCount[0].count <= 1) {
-          return res.status(400).json({ message: "Cannot delete the last admin user" });
-        }
+      if (existingUser.role === "admin" && await storage.countAdmins() <= 1) {
+        return res.status(400).json({ message: "Cannot delete the last admin user" });
       }
 
-      // Delete user
-      await db.delete(users).where(eq(users.id, id));
+      await storage.deleteUser(id);
 
       res.status(204).end();
     } catch (error) {
@@ -312,10 +260,7 @@ export function registerUserRoutes(app: Express): void {
   // User sharing routes
   app.get("/api/user-sharing", authenticate, async (req, res) => {
     try {
-      const sharingSettings = await db.select().from(userSharing)
-        .where(eq(userSharing.userId, req.userId));
-
-      res.json(sharingSettings);
+      res.json(await storage.getUserSharing(req.userId));
     } catch (error) {
       appLogger.error("Get user sharing settings error:", error);
       res.status(500).json({ message: "Server error" });
@@ -326,26 +271,11 @@ export function registerUserRoutes(app: Express): void {
     try {
       const { materialId, isPublic } = req.body;
 
-      // Delete existing sharing settings for this material. A global setting
-      // has a NULL material_id, and `material_id = NULL` is never true, so it
-      // needs IS NULL - otherwise the old row survives and an isPublic:false
-      // update leaves the earlier public row still sharing the collection.
-      await db.delete(userSharing)
-        .where(and(
-          eq(userSharing.userId, req.userId),
-          materialId == null
-            ? isNull(userSharing.materialId)
-            : eq(userSharing.materialId, materialId)
-        ));
-
-      // Create new sharing setting
-      const [newSharing] = await db.insert(userSharing)
-        .values({
-          userId: req.userId,
-          materialId,
-          isPublic: isPublic || false
-        })
-        .returning();
+      const newSharing = await storage.setUserSharing(
+        req.userId,
+        materialId ?? null,
+        isPublic || false,
+      );
 
       res.status(201).json(newSharing);
     } catch (error) {

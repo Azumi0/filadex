@@ -10,9 +10,9 @@ import {
   customFieldDefinitions, type CustomFieldDefinition, type InsertCustomFieldDefinition,
   apiTokens, type ApiToken
 } from "@shared/schema";
-import { users, type User } from "@shared/schema";
+import { users, type User, userSharing, type UserSharing } from "@shared/schema";
 import { db } from "./db";
-import { eq, sql, and, inArray, desc, isNull } from "drizzle-orm";
+import { eq, sql, and, inArray, desc, isNull, count } from "drizzle-orm";
 import { logger } from "./utils/logger";
 
 /** What the authentication middleware needs to authorize a request. */
@@ -38,6 +38,42 @@ export type NewUser = {
   forceChangePassword: boolean;
   emailVerificationToken?: string | null;
   emailVerificationExpires?: Date | null;
+};
+
+/** The columns the admin user list exposes - notably not the password hash. */
+export type AdminUserListEntry = {
+  id: number;
+  username: string;
+  isAdmin: boolean | null;
+  role: string;
+  email: string | null;
+  emailVerified: boolean | null;
+  forceChangePassword: boolean | null;
+  language: string | null;
+  currency: string | null;
+  temperatureUnit: string | null;
+  createdAt: Date | null;
+  lastLogin: Date | null;
+};
+
+/** What an administrator is allowed to change about another account. */
+export type UserChanges = {
+  username?: string;
+  password?: string;
+  isAdmin?: boolean;
+  role?: string;
+  forceChangePassword?: boolean;
+};
+
+/** Per-user settings a user changes about themselves. */
+export type UserPreferences = {
+  language?: string;
+  currency?: string;
+  temperatureUnit?: string;
+  lowStockThresholdPercent?: number;
+  notifyLowStock?: boolean;
+  notifyDryingReminder?: boolean;
+  dryingReminderDays?: number;
 };
 
 export interface InsertFilamentUsageLog {
@@ -142,6 +178,20 @@ export interface IStorage {
   /** Changes the password of a user who is already signed in. */
   changePassword(userId: number, hashedPassword: string): Promise<void>;
   recordLogin(userId: number): Promise<void>;
+
+  // User administration
+  listUsers(): Promise<AdminUserListEntry[]>;
+  updateUser(id: number, changes: UserChanges): Promise<User | undefined>;
+  deleteUser(id: number): Promise<void>;
+  /** How many accounts can still administer the installation. */
+  countAdmins(): Promise<number>;
+  /** Writes whichever preferences were supplied; no-ops when none were. */
+  updateUserPreferences(userId: number, preferences: UserPreferences): Promise<void>;
+
+  // Sharing settings
+  getUserSharing(userId: number): Promise<UserSharing[]>;
+  /** Replaces this user's setting for a material - or their global one, when materialId is null. */
+  setUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UserSharing>;
 
   // Filament operations
   getFilaments(userId: number): Promise<Filament[]>;
@@ -288,6 +338,68 @@ export class DatabaseStorage implements IStorage {
 
   async recordLogin(userId: number): Promise<void> {
     await db.update(users).set({ lastLogin: new Date() }).where(eq(users.id, userId));
+  }
+
+  async listUsers(): Promise<AdminUserListEntry[]> {
+    return await db.select({
+      id: users.id,
+      username: users.username,
+      isAdmin: users.isAdmin,
+      role: users.role,
+      email: users.email,
+      emailVerified: users.emailVerified,
+      forceChangePassword: users.forceChangePassword,
+      language: users.language,
+      currency: users.currency,
+      temperatureUnit: users.temperatureUnit,
+      createdAt: users.createdAt,
+      lastLogin: users.lastLogin,
+    }).from(users);
+  }
+
+  async updateUser(id: number, changes: UserChanges): Promise<User | undefined> {
+    if (Object.keys(changes).length === 0) {
+      return await this.getUser(id);
+    }
+
+    const [updated] = await db.update(users).set(changes).where(eq(users.id, id)).returning();
+    return updated || undefined;
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    await db.delete(users).where(eq(users.id, id));
+  }
+
+  async countAdmins(): Promise<number> {
+    const [{ count: admins }] = await db.select({ count: count() }).from(users)
+      .where(eq(users.role, "admin"));
+    return admins;
+  }
+
+  async updateUserPreferences(userId: number, preferences: UserPreferences): Promise<void> {
+    if (Object.keys(preferences).length === 0) {
+      return;
+    }
+
+    await db.update(users).set(preferences).where(eq(users.id, userId));
+  }
+
+  async getUserSharing(userId: number): Promise<UserSharing[]> {
+    return await db.select().from(userSharing).where(eq(userSharing.userId, userId));
+  }
+
+  async setUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UserSharing> {
+    // A global setting has a NULL material_id, and `material_id = NULL` is never
+    // true, so clearing it needs IS NULL.
+    await db.delete(userSharing).where(and(
+      eq(userSharing.userId, userId),
+      materialId === null ? isNull(userSharing.materialId) : eq(userSharing.materialId, materialId),
+    ));
+
+    const [created] = await db.insert(userSharing)
+      .values({ userId, materialId, isPublic })
+      .returning();
+    return created;
   }
 
   // Filament implementations
