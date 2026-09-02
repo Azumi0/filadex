@@ -1,10 +1,7 @@
 import type { Express, Request } from "express";
 import crypto from "crypto";
 import rateLimit from "express-rate-limit";
-import { eq, sql } from "drizzle-orm";
-import { db } from "../db";
 import {
-  users,
   changePasswordSchema,
   registerSchema,
   forgotPasswordSchema,
@@ -13,6 +10,7 @@ import {
   usernameSchema,
 } from "../../shared/schema";
 import { authenticate, hashPassword, verifyPassword, generateToken } from "../auth";
+import { storage } from "../storage";
 import { sendMail } from "../utils/mailer";
 import { verificationEmail, passwordResetEmail } from "../utils/email-templates";
 import { logger as appLogger } from "../utils/logger";
@@ -54,12 +52,12 @@ export function registerAuthRoutes(app: Express): void {
     try {
       const { username, email, password } = registerSchema.parse(req.body);
 
-      const [existingByUsername] = await db.select().from(users).where(sql`LOWER(${users.username}) = LOWER(${username})`);
+      const existingByUsername = await storage.getUserByUsername(username);
       if (existingByUsername) {
         return res.status(400).json({ message: "Username already exists" });
       }
 
-      const [existingByEmail] = await db.select().from(users).where(sql`LOWER(${users.email}) = LOWER(${email})`);
+      const existingByEmail = await storage.getUserByEmail(email);
       if (existingByEmail) {
         return res.status(400).json({ message: "An account with this email already exists" });
       }
@@ -67,7 +65,7 @@ export function registerAuthRoutes(app: Express): void {
       const hashedPassword = await hashPassword(password);
       const verificationToken = generateToken32();
 
-      await db.insert(users).values({
+      await storage.createUser({
         username,
         email,
         password: hashedPassword,
@@ -100,7 +98,7 @@ export function registerAuthRoutes(app: Express): void {
         return res.json({ available: false, reason: parsed.error.errors[0]?.message });
       }
 
-      const [existing] = await db.select({ id: users.id }).from(users).where(sql`LOWER(${users.username}) = LOWER(${parsed.data})`);
+      const existing = await storage.getUserByUsername(parsed.data);
       res.json({ available: !existing });
     } catch (error) {
       appLogger.error("Check username error:", error);
@@ -116,15 +114,13 @@ export function registerAuthRoutes(app: Express): void {
         return res.status(400).json({ message: "Invalid verification link" });
       }
 
-      const [user] = await db.select().from(users).where(eq(users.emailVerificationToken, token));
+      const user = await storage.getUserByEmailVerificationToken(token);
 
       if (!user || !user.emailVerificationExpires || user.emailVerificationExpires < new Date()) {
         return res.status(400).json({ message: "This verification link is invalid or has expired" });
       }
 
-      await db.update(users)
-        .set({ emailVerified: true, emailVerificationToken: null, emailVerificationExpires: null })
-        .where(eq(users.id, user.id));
+      await storage.markEmailVerified(user.id);
 
       res.json({ message: "Email verified successfully. You can now log in." });
     } catch (error) {
@@ -138,13 +134,15 @@ export function registerAuthRoutes(app: Express): void {
     const genericResponse = { message: "If an account with that email exists and isn't verified yet, a new verification email has been sent." };
     try {
       const { email } = resendVerificationSchema.parse(req.body);
-      const [user] = await db.select().from(users).where(sql`LOWER(${users.email}) = LOWER(${email})`);
+      const user = await storage.getUserByEmail(email);
 
       if (user && !user.emailVerified) {
         const verificationToken = generateToken32();
-        await db.update(users)
-          .set({ emailVerificationToken: verificationToken, emailVerificationExpires: new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS) })
-          .where(eq(users.id, user.id));
+        await storage.setEmailVerificationToken(
+          user.id,
+          verificationToken,
+          new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS),
+        );
 
         const verifyUrl = `${baseUrl(req)}/verify-email?token=${verificationToken}`;
         await sendMail({ to: email, ...verificationEmail("en", verifyUrl) });
@@ -166,13 +164,15 @@ export function registerAuthRoutes(app: Express): void {
     const genericResponse = { message: "If an account with that email exists, a password reset link has been sent." };
     try {
       const { email } = forgotPasswordSchema.parse(req.body);
-      const [user] = await db.select().from(users).where(sql`LOWER(${users.email}) = LOWER(${email})`);
+      const user = await storage.getUserByEmail(email);
 
       if (user) {
         const resetToken = generateToken32();
-        await db.update(users)
-          .set({ passwordResetToken: resetToken, passwordResetExpires: new Date(Date.now() + RESET_TOKEN_TTL_MS) })
-          .where(eq(users.id, user.id));
+        await storage.setPasswordResetToken(
+          user.id,
+          resetToken,
+          new Date(Date.now() + RESET_TOKEN_TTL_MS),
+        );
 
         const resetUrl = `${baseUrl(req)}/reset-password?token=${resetToken}`;
         await sendMail({ to: email, ...passwordResetEmail((user.language as "en" | "de") || "en", resetUrl) });
@@ -193,16 +193,13 @@ export function registerAuthRoutes(app: Express): void {
     try {
       const { token, newPassword } = resetPasswordSchema.parse(req.body);
 
-      const [user] = await db.select().from(users).where(eq(users.passwordResetToken, token));
+      const user = await storage.getUserByPasswordResetToken(token);
 
       if (!user || !user.passwordResetExpires || user.passwordResetExpires < new Date()) {
         return res.status(400).json({ message: "This reset link is invalid or has expired" });
       }
 
-      const hashedPassword = await hashPassword(newPassword);
-      await db.update(users)
-        .set({ password: hashedPassword, passwordResetToken: null, passwordResetExpires: null, forceChangePassword: false })
-        .where(eq(users.id, user.id));
+      await storage.resetPassword(user.id, await hashPassword(newPassword));
 
       res.json({ message: "Password reset successfully. You can now log in with your new password." });
     } catch (error) {
@@ -222,7 +219,7 @@ export function registerAuthRoutes(app: Express): void {
       // Matched case-insensitively, the same way registration and admin user
       // creation check for a duplicate: if "ALICE" cannot be registered while
       // "alice" exists, then "ALICE" has to be a way to log in as "alice".
-      const [user] = await db.select().from(users).where(sql`LOWER(${users.username}) = LOWER(${username})`);
+      const user = await storage.getUserByUsername(username);
 
       if (!user || !(await verifyPassword(password, user.password))) {
         return res.status(401).json({ message: "Invalid credentials" });
@@ -233,9 +230,7 @@ export function registerAuthRoutes(app: Express): void {
       }
 
       // Update last login
-      await db.update(users)
-        .set({ lastLogin: new Date() })
-        .where(eq(users.id, user.id));
+      await storage.recordLogin(user.id);
 
       // Generate token
       const token = generateToken(user.id);
@@ -270,7 +265,7 @@ export function registerAuthRoutes(app: Express): void {
   // Get current user
   app.get("/api/auth/me", authenticate, async (req, res) => {
     try {
-      const [user] = await db.select().from(users).where(eq(users.id, req.userId));
+      const user = await storage.getUser(req.userId);
 
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -295,20 +290,13 @@ export function registerAuthRoutes(app: Express): void {
 
       const { currentPassword, newPassword } = result.data;
 
-      const [user] = await db.select().from(users).where(eq(users.id, req.userId));
+      const user = await storage.getUser(req.userId);
 
       if (!user || !(await verifyPassword(currentPassword, user.password))) {
         return res.status(401).json({ message: "Current password is incorrect" });
       }
 
-      const hashedPassword = await hashPassword(newPassword);
-
-      await db.update(users)
-        .set({
-          password: hashedPassword,
-          forceChangePassword: false
-        })
-        .where(eq(users.id, req.userId));
+      await storage.changePassword(req.userId, await hashPassword(newPassword));
 
       res.json({ message: "Password updated successfully" });
     } catch (error) {

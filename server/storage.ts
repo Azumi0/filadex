@@ -130,6 +130,18 @@ export interface IStorage {
   /** Just the fields the authentication middleware puts on the request. */
   getUserAuthContext(id: number): Promise<AuthContext | undefined>;
   createUser(user: NewUser): Promise<User>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByEmailVerificationToken(token: string): Promise<User | undefined>;
+  getUserByPasswordResetToken(token: string): Promise<User | undefined>;
+  /** Marks the address confirmed and spends the token that confirmed it. */
+  markEmailVerified(userId: number): Promise<void>;
+  setEmailVerificationToken(userId: number, token: string, expiresAt: Date): Promise<void>;
+  setPasswordResetToken(userId: number, token: string, expiresAt: Date): Promise<void>;
+  /** Completes a reset: sets the password and spends the reset token. */
+  resetPassword(userId: number, hashedPassword: string): Promise<void>;
+  /** Changes the password of a user who is already signed in. */
+  changePassword(userId: number, hashedPassword: string): Promise<void>;
+  recordLogin(userId: number): Promise<void>;
 
   // Filament operations
   getFilaments(userId: number): Promise<Filament[]>;
@@ -217,6 +229,65 @@ export class DatabaseStorage implements IStorage {
       .values(newUser)
       .returning();
     return user;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users)
+      .where(sql`LOWER(${users.email}) = LOWER(${email})`);
+    return user || undefined;
+  }
+
+  async getUserByEmailVerificationToken(token: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users)
+      .where(eq(users.emailVerificationToken, token));
+    return user || undefined;
+  }
+
+  async getUserByPasswordResetToken(token: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users)
+      .where(eq(users.passwordResetToken, token));
+    return user || undefined;
+  }
+
+  async markEmailVerified(userId: number): Promise<void> {
+    await db.update(users)
+      .set({ emailVerified: true, emailVerificationToken: null, emailVerificationExpires: null })
+      .where(eq(users.id, userId));
+  }
+
+  async setEmailVerificationToken(userId: number, token: string, expiresAt: Date): Promise<void> {
+    await db.update(users)
+      .set({ emailVerificationToken: token, emailVerificationExpires: expiresAt })
+      .where(eq(users.id, userId));
+  }
+
+  async setPasswordResetToken(userId: number, token: string, expiresAt: Date): Promise<void> {
+    await db.update(users)
+      .set({ passwordResetToken: token, passwordResetExpires: expiresAt })
+      .where(eq(users.id, userId));
+  }
+
+  async resetPassword(userId: number, hashedPassword: string): Promise<void> {
+    await db.update(users)
+      .set({
+        password: hashedPassword,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+        forceChangePassword: false,
+      })
+      .where(eq(users.id, userId));
+  }
+
+  // Unlike resetPassword this leaves any pending reset token alone, which is
+  // the behaviour the change-password endpoint has always had.
+  async changePassword(userId: number, hashedPassword: string): Promise<void> {
+    await db.update(users)
+      .set({ password: hashedPassword, forceChangePassword: false })
+      .where(eq(users.id, userId));
+  }
+
+  async recordLogin(userId: number): Promise<void> {
+    await db.update(users).set({ lastLogin: new Date() }).where(eq(users.id, userId));
   }
 
   // Filament implementations
