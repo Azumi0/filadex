@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db } from "../server/db";
+import type { LegacyDatabase } from "./types";
 import { addColumnIfMissing } from "./helpers";
 
 /**
@@ -16,7 +16,7 @@ import { addColumnIfMissing } from "./helpers";
  *
  * Run with: npx tsx migrations/add_filament_types.ts
  */
-export async function runMigration() {
+export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: filament types...");
 
   await db.execute(sql`
@@ -53,8 +53,7 @@ export async function runMigration() {
   if (legacyMaterialColumn.length === 0) {
     // A fresh install created via `drizzle-kit push` already has the new
     // shape and no rows to backfill.
-    await addColumnIfMissing(
-      "filaments",
+    await addColumnIfMissing(db, "filaments",
       "filament_type_id",
       sql`ALTER TABLE filaments ADD COLUMN filament_type_id INTEGER REFERENCES filament_types(id);`,
     );
@@ -72,8 +71,7 @@ export async function runMigration() {
   `);
   console.log("✓ Backfilled filament_types from distinct filament combinations");
 
-  await addColumnIfMissing(
-    "filaments",
+  await addColumnIfMissing(db, "filaments",
     "filament_type_id",
     sql`ALTER TABLE filaments ADD COLUMN filament_type_id INTEGER REFERENCES filament_types(id);`,
   );
@@ -95,10 +93,3 @@ export async function runMigration() {
 
   console.log("Migration completed successfully!");
 }
-
-runMigration()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error("Migration failed:", error);
-    process.exit(1);
-  });

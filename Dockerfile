@@ -15,14 +15,6 @@ COPY . .
 
 # Build the application - build both frontend and backend
 RUN npm run build
-# Create server directory structure for migrations and init scripts
-RUN mkdir -p dist/migrations
-# Copy TypeScript migration files (will be run with tsx) - use shell to handle optional files
-RUN if ls migrations/*.ts 1> /dev/null 2>&1; then cp migrations/*.ts dist/migrations/; fi
-# Copy init-data.ts for database initialization
-COPY init-data.ts dist/
-# Copy run-migration.ts
-COPY run-migration.ts dist/
 
 # Production image
 FROM node:20-alpine as production
@@ -48,16 +40,19 @@ RUN npm install pg drizzle-orm zod
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/shared ./shared
-# Required so tsx (used to run migrations/*.ts, init-data.ts, run-migration.ts
-# as raw TypeScript) can resolve the @shared/* path alias. Without this,
-# `@shared/schema` fails with ERR_MODULE_NOT_FOUND and every migration
-# silently no-ops (see docker-entrypoint.sh) - the app then starts against
-# an unmigrated DB. dist/index.js itself doesn't need this: esbuild already
-# resolved the alias at build time when bundling it.
+# Required so tsx (used to run scripts/migrate.ts and init-data.ts as raw
+# TypeScript) can resolve the @shared/* path alias. Without this,
+# `@shared/schema` fails with ERR_MODULE_NOT_FOUND. dist/index.js itself
+# doesn't need this: esbuild already resolved the alias at build time when
+# bundling it.
 COPY --from=build /app/tsconfig.json ./tsconfig.json
-RUN mkdir -p ./migrations && if [ -d /app/dist/migrations ] && [ "$(ls -A /app/dist/migrations 2>/dev/null)" ]; then cp -r /app/dist/migrations/* ./migrations/; fi || true
+# The migration runner, the generated SQL migrations it applies, and the frozen
+# legacy chain it uses to catch an older database up before baselining it.
+# Only migrate.ts: the other scripts are development tools and pull in
+# devDependencies this image does not install.
+COPY --from=build /app/scripts/migrate.ts ./scripts/migrate.ts
+COPY --from=build /app/migrations ./migrations
 COPY --from=build /app/init-data.ts ./init-data.ts
-COPY --from=build /app/run-migration.ts ./run-migration.ts
 
 # Kopiere das Entrypoint-Skript
 COPY docker-entrypoint.sh /docker-entrypoint.sh

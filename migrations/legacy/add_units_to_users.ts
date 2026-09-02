@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db } from "../server/db";
+import type { LegacyDatabase } from "./types";
 
 /**
  * Migration: Add currency and temperatureUnit columns to users table

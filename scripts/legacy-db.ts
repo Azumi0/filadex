@@ -1,19 +1,18 @@
 /**
  * Builds a database the way a deployment built one before this branch:
- * docker-entrypoint.sh's CREATE TABLE block, then the migration chain in the
- * order that script runs it.
+ * the base schema docker-entrypoint.sh used to create, then the frozen chain in
+ * migrations/legacy.
  *
  * This is what an existing installation upgrades *from*, so it is what any
- * change to the migration system has to be tested against. The DDL is read out
- * of docker-entrypoint.sh rather than copied, so it cannot fall out of step
- * with what deployments actually ran.
+ * change to the migration system has to be tested against.
  *
  * Requires Docker.
  */
-import { spawnSync } from "node:child_process";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
-import { LEGACY_MIGRATIONS, entrypointSchemaSql } from "./legacy-migrations";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { entrypointSchemaSql } from "./legacy-migrations";
+import { runLegacyMigrations } from "../migrations/legacy";
 
 
 export async function buildLegacyDatabase() {
@@ -23,15 +22,7 @@ export async function buildLegacyDatabase() {
 
   await pool.query(entrypointSchemaSql());
 
-  for (const migration of LEGACY_MIGRATIONS) {
-    const result = spawnSync("npx", ["tsx", migration], {
-      env: { ...process.env, DATABASE_URL: url },
-      encoding: "utf8",
-    });
-    if (result.status !== 0) {
-      throw new Error(`migration failed: ${migration}\n${result.stderr}`);
-    }
-  }
+  await runLegacyMigrations(drizzle(pool));
 
   return { container, pool, url };
 }

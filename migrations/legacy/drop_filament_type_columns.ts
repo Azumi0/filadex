@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db } from "../server/db";
+import type { LegacyDatabase } from "./types";
 
 /**
  * Migration: drops the product-identity columns from `filaments` now that
@@ -12,7 +12,7 @@ import { db } from "../server/db";
  *
  * Run with: npx tsx migrations/drop_filament_type_columns.ts
  */
-export async function runMigration() {
+export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: drop redundant filament type columns...");
 
   const { rows: legacyMaterialColumn } = await db.execute(sql`
@@ -65,10 +65,3 @@ export async function runMigration() {
 
   console.log("Migration completed successfully!");
 }
-
-runMigration()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error("Migration failed:", error);
-    process.exit(1);
-  });

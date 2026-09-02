@@ -13,25 +13,27 @@
  *
  *   Existing install     Tables exist but there is no journal - a deployment
  *                        built by docker-entrypoint.sh's CREATE TABLE block and
- *                        the imperative migrations/*.ts scripts. Running 0000
- *                        here would fail on the first CREATE TABLE, so instead
- *                        the legacy scripts are run once more to bring the
- *                        database to a known state, and 0000 is then recorded
- *                        as applied without being run. From the next release
- *                        onward such a deployment is on the first path above.
+ *                        the migrations/legacy scripts. Running 0000 here would
+ *                        fail on the first CREATE TABLE, so instead the legacy
+ *                        chain is run once to bring the database to a known
+ *                        state, and 0000 is then recorded as applied without
+ *                        being run. From the next release onward such a
+ *                        deployment is on the first path above.
  *
  * The legacy catch-up matters because an installation may be several versions
  * behind and have run only some of those scripts. They are all guarded on
  * information_schema, so re-running them on an up-to-date database does
  * nothing. Baselining without it would declare a schema present that is not.
+ *
+ * See migrations/legacy/README.md for why that chain stays in the repository
+ * and what keeps it working.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { db, pool } from "../server/db";
-import { LEGACY_MIGRATIONS } from "./legacy-migrations";
+import { runLegacyMigrations } from "../migrations/legacy";
 
 const MIGRATIONS_FOLDER = "migrations/pg";
 
@@ -70,16 +72,6 @@ async function hasApplicationTables(): Promise<boolean> {
   return Boolean(result.rows[0].present);
 }
 
-function runLegacyMigrations() {
-  for (const migration of LEGACY_MIGRATIONS) {
-    console.log(`  legacy: ${migration}`);
-    const result = spawnSync("npx", ["tsx", migration], { stdio: "inherit" });
-    if (result.status !== 0) {
-      throw new Error(`Legacy migration failed: ${migration}`);
-    }
-  }
-}
-
 /** Records 0000 as applied without running it, for a schema that already exists. */
 async function baseline() {
   const { tag, when } = firstMigration();
@@ -101,7 +93,7 @@ async function main() {
     console.log("Database is on generated migrations; applying any new ones.");
   } else if (await hasApplicationTables()) {
     console.log("Existing installation found. Catching up on the legacy migrations first:");
-    runLegacyMigrations();
+    await runLegacyMigrations(db);
     console.log("Recording the current schema as the migration baseline:");
     await baseline();
   } else {

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db } from "../server/db";
+import type { LegacyDatabase } from "./types";
 import { addColumnIfMissing } from "./helpers";
 
 /**
@@ -10,20 +10,20 @@ import { addColumnIfMissing } from "./helpers";
  * of a hardcoded material list.
  * Run with: npx tsx migrations/add_notification_preferences.ts
  */
-export async function runMigration() {
+export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: notification preferences...");
 
-  await addColumnIfMissing("users", "low_stock_threshold_percent", sql`ALTER TABLE users ADD COLUMN low_stock_threshold_percent INTEGER DEFAULT 15;`);
-  await addColumnIfMissing("users", "notify_low_stock", sql`ALTER TABLE users ADD COLUMN notify_low_stock BOOLEAN DEFAULT true;`);
-  await addColumnIfMissing("users", "notify_drying_reminder", sql`ALTER TABLE users ADD COLUMN notify_drying_reminder BOOLEAN DEFAULT true;`);
-  await addColumnIfMissing("users", "drying_reminder_days", sql`ALTER TABLE users ADD COLUMN drying_reminder_days INTEGER DEFAULT 30;`);
+  await addColumnIfMissing(db, "users", "low_stock_threshold_percent", sql`ALTER TABLE users ADD COLUMN low_stock_threshold_percent INTEGER DEFAULT 15;`);
+  await addColumnIfMissing(db, "users", "notify_low_stock", sql`ALTER TABLE users ADD COLUMN notify_low_stock BOOLEAN DEFAULT true;`);
+  await addColumnIfMissing(db, "users", "notify_drying_reminder", sql`ALTER TABLE users ADD COLUMN notify_drying_reminder BOOLEAN DEFAULT true;`);
+  await addColumnIfMissing(db, "users", "drying_reminder_days", sql`ALTER TABLE users ADD COLUMN drying_reminder_days INTEGER DEFAULT 30;`);
   console.log("✓ Added notification preference columns to users");
 
-  await addColumnIfMissing("filaments", "low_stock_notified_at", sql`ALTER TABLE filaments ADD COLUMN low_stock_notified_at TIMESTAMP;`);
-  await addColumnIfMissing("filaments", "drying_reminder_notified_at", sql`ALTER TABLE filaments ADD COLUMN drying_reminder_notified_at TIMESTAMP;`);
+  await addColumnIfMissing(db, "filaments", "low_stock_notified_at", sql`ALTER TABLE filaments ADD COLUMN low_stock_notified_at TIMESTAMP;`);
+  await addColumnIfMissing(db, "filaments", "drying_reminder_notified_at", sql`ALTER TABLE filaments ADD COLUMN drying_reminder_notified_at TIMESTAMP;`);
   console.log("✓ Added low_stock_notified_at and drying_reminder_notified_at columns to filaments");
 
-  await addColumnIfMissing("materials", "is_hygroscopic", sql`ALTER TABLE materials ADD COLUMN is_hygroscopic BOOLEAN DEFAULT false;`);
+  await addColumnIfMissing(db, "materials", "is_hygroscopic", sql`ALTER TABLE materials ADD COLUMN is_hygroscopic BOOLEAN DEFAULT false;`);
   console.log("✓ Added is_hygroscopic column to materials");
 
   // Deliberately no bare 'PA%'/'%PA%' pattern here - it would also match
@@ -41,10 +41,3 @@ export async function runMigration() {
 
   console.log("Migration completed successfully!");
 }
-
-runMigration()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error("Migration failed:", error);
-    process.exit(1);
-  });
