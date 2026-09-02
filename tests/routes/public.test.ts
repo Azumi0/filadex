@@ -173,12 +173,11 @@ describe("GET /api/public/filaments/:userId", () => {
     expect(response.body.filaments).toEqual([]);
   });
 
-  // KNOWN BUG (recorded, not fixed): user_sharing.material_id points at the
-  // materials catalogue, but a filament records its material as free text, and
-  // the two are matched by exact string equality. A spool entered as "petg"
-  // is not shared by sharing the catalogue's "PETG", and the owner is told
-  // nothing - they just get an empty public page.
-  it("does not match a filament whose material differs from the catalogue name only in case", async () => {
+  // A filament records its material as free text while user_sharing.material_id
+  // points at the materials catalogue, so the two are matched by name, ignoring
+  // case - otherwise a spool entered as "petg" would not be covered by sharing
+  // the catalogue's "PETG".
+  it("matches a filament whose material differs from the catalogue name only in case", async () => {
     await giveAliceASpoolOf("petg");
     const petg = await storage.createMaterial({ name: "PETG" });
     await share(aliceCookie, { materialId: petg.id, isPublic: true });
@@ -186,7 +185,19 @@ describe("GET /api/public/filaments/:userId", () => {
     const response = await request(app).get(`/api/public/filaments/${aliceId}`);
 
     expect(response.status).toBe(200);
-    expect(response.body.filaments).toEqual([]);
+    expect(response.body.filaments).toHaveLength(1);
+    expect(response.body.filaments[0].material).toBe("petg");
+  });
+
+  it("still excludes filaments of a material that was not shared", async () => {
+    await giveAliceASpoolOf("PLA");
+    await giveAliceASpoolOf("petg");
+    const petg = await storage.createMaterial({ name: "PETG" });
+    await share(aliceCookie, { materialId: petg.id, isPublic: true });
+
+    const response = await request(app).get(`/api/public/filaments/${aliceId}`);
+
+    expect(response.body.filaments.map((f: { material: string }) => f.material)).toEqual(["petg"]);
   });
 });
 

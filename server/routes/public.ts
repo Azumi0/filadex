@@ -53,9 +53,13 @@ export function registerPublicRoutes(app: Express): void {
         const sharedMaterials = sharedMaterialIds.length > 0
           ? await db.select().from(materials).where(inArray(materials.id, sharedMaterialIds))
           : [];
-        const sharedMaterialNames = new Set(sharedMaterials.map((m) => m.name));
+        // Compared case-insensitively: a filament's material is free text, so a
+        // spool entered as "petg" must still be covered by sharing the
+        // catalog's "PETG" - otherwise the owner gets an empty public page
+        // with no indication their share matched nothing.
+        const sharedMaterialNames = new Set(sharedMaterials.map((m) => m.name.toLowerCase()));
 
-        publicFilaments = filaments.filter((filament) => sharedMaterialNames.has(filament.material));
+        publicFilaments = filaments.filter((filament) => sharedMaterialNames.has(filament.material.toLowerCase()));
       }
 
       // Return filaments with user information
