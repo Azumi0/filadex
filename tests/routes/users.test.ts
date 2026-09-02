@@ -48,6 +48,27 @@ async function currentUser(cookie: string) {
   return response.body;
 }
 
+describe("the default admin bootstrap", () => {
+  // The username namespace is case-insensitive everywhere else - registration,
+  // admin creation and now login - so the bootstrap has to see "Admin" as the
+  // admin account too. Creating a second row differing only in case would make
+  // the login lookup ambiguous.
+  it("does not add a second admin when one exists under different capitalisation", async () => {
+    const listed = await request(app).get("/api/users").set("Cookie", adminCookie);
+    const admin = listed.body.find((user: { username: string }) => user.username === "admin");
+    await request(app)
+      .put(`/api/users/${admin.id}`)
+      .set("Cookie", adminCookie)
+      .send({ username: "Admin" })
+      .expect(200);
+
+    await initializeAdminUser();
+
+    const after = await request(app).get("/api/users").set("Cookie", adminCookie);
+    expect(after.body.map((user: { username: string }) => user.username)).toEqual(["Admin"]);
+  });
+});
+
 describe("POST /api/users/language", () => {
   it("rejects a request with no session cookie", async () => {
     const response = await request(app).post("/api/users/language").send({ language: "de" });

@@ -10,10 +10,35 @@ import {
   customFieldDefinitions, type CustomFieldDefinition, type InsertCustomFieldDefinition,
   apiTokens, type ApiToken
 } from "@shared/schema";
-import { users, type User, type InsertUser } from "@shared/schema";
+import { users, type User } from "@shared/schema";
 import { db } from "./db";
 import { eq, sql, and, inArray, desc, isNull } from "drizzle-orm";
 import { logger } from "./utils/logger";
+
+/** What the authentication middleware needs to authorize a request. */
+export type AuthContext = {
+  id: number;
+  username: string;
+  isAdmin: boolean | null;
+  role: string;
+};
+
+/**
+ * A new account. Wider than InsertUser: self-registration and the default-admin
+ * bootstrap both need to set the fields that decide whether the account can log
+ * in at all (role, emailVerified, the verification token).
+ */
+export type NewUser = {
+  username: string;
+  password: string;
+  email?: string | null;
+  role: string;
+  isAdmin: boolean;
+  emailVerified: boolean;
+  forceChangePassword: boolean;
+  emailVerificationToken?: string | null;
+  emailVerificationExpires?: Date | null;
+};
 
 export interface InsertFilamentUsageLog {
   filamentId: number;
@@ -100,8 +125,11 @@ const FILAMENT_SELECT_COLUMNS = {
 // you might need
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
+  /** Looks a user up by name the way the account namespace is defined: ignoring case. */
   getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  /** Just the fields the authentication middleware puts on the request. */
+  getUserAuthContext(id: number): Promise<AuthContext | undefined>;
+  createUser(user: NewUser): Promise<User>;
 
   // Filament operations
   getFilaments(userId: number): Promise<Filament[]>;
@@ -168,14 +196,25 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
+    const [user] = await db.select().from(users)
+      .where(sql`LOWER(${users.username}) = LOWER(${username})`);
     return user || undefined;
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async getUserAuthContext(id: number): Promise<AuthContext | undefined> {
+    const [user] = await db.select({
+      id: users.id,
+      username: users.username,
+      isAdmin: users.isAdmin,
+      role: users.role,
+    }).from(users).where(eq(users.id, id));
+    return user || undefined;
+  }
+
+  async createUser(newUser: NewUser): Promise<User> {
     const [user] = await db
       .insert(users)
-      .values(insertUser)
+      .values(newUser)
       .returning();
     return user;
   }

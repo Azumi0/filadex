@@ -2,9 +2,6 @@ import { Request, Response, NextFunction } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import { db } from "./db";
-import { users } from "../shared/schema";
-import { eq } from "drizzle-orm";
 import { logger } from "./utils/logger";
 import { storage } from "./storage";
 
@@ -58,12 +55,7 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     req.userId = decoded.userId;
 
     // Get user data and attach to request
-    const [user] = await db.select({
-      id: users.id,
-      username: users.username,
-      isAdmin: users.isAdmin,
-      role: users.role
-    }).from(users).where(eq(users.id, decoded.userId));
+    const user = await storage.getUserAuthContext(decoded.userId);
 
     if (user) {
       req.user = {
@@ -147,12 +139,12 @@ export const isAdmin = requireRole("admin");
 export async function initializeAdminUser() {
   try {
     // Check if admin user exists
-    const adminExists = await db.select().from(users).where(eq(users.username, "admin"));
+    const adminExists = await storage.getUserByUsername("admin");
 
-    if (adminExists.length === 0) {
+    if (!adminExists) {
       // Create default admin user
       const hashedPassword = await hashPassword("admin");
-      await db.insert(users).values({
+      await storage.createUser({
         username: "admin",
         password: hashedPassword,
         isAdmin: true,
