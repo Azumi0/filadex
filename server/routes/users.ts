@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { eq, count, sql } from "drizzle-orm";
+import { eq, count, sql, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { users, userSharing } from "../../shared/schema";
 import { authenticate, isAdmin, hashPassword } from "../auth";
@@ -307,11 +307,16 @@ export function registerUserRoutes(app: Express): void {
     try {
       const { materialId, isPublic } = req.body;
 
-      // Delete existing sharing settings for this material
+      // Delete existing sharing settings for this material. A global setting
+      // has a NULL material_id, and `material_id = NULL` is never true, so it
+      // needs IS NULL - otherwise the old row survives and an isPublic:false
+      // update leaves the earlier public row still sharing the collection.
       await db.delete(userSharing)
         .where(and(
           eq(userSharing.userId, req.userId),
-          eq(userSharing.materialId, materialId)
+          materialId == null
+            ? isNull(userSharing.materialId)
+            : eq(userSharing.materialId, materialId)
         ));
 
       // Create new sharing setting

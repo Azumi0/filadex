@@ -616,33 +616,38 @@ describe("/api/user-sharing", () => {
 });
 
 describe("POST /api/user-sharing for a global share", () => {
-  // KNOWN BUG (recorded, not fixed): this endpoint clears the previous setting
-  // with `eq(userSharing.materialId, materialId)`, which never matches a row
-  // whose material_id is NULL - SQL equality against NULL is never true. A
-  // global share therefore inserts a new row every time instead of replacing
-  // the old one.
-  it("adds another row instead of replacing the previous global setting", async () => {
+  it("replaces the previous global setting rather than adding a second row", async () => {
     const cookie = await registerAndVerify(app, alice);
 
     await request(app).post("/api/user-sharing").set("Cookie", cookie).send({ isPublic: true }).expect(201);
     await request(app).post("/api/user-sharing").set("Cookie", cookie).send({ isPublic: true }).expect(201);
 
     const listed = await request(app).get("/api/user-sharing").set("Cookie", cookie);
-    expect(listed.body).toHaveLength(2);
+    expect(listed.body).toHaveLength(1);
   });
 
-  // KNOWN BUG (recorded, not fixed), and the damaging consequence of the above:
-  // the stale isPublic:true row outlives the switch-off, and
-  // GET /api/public/filaments/:userId only looks for *any* public row. So
-  // turning global sharing off through this endpoint does not make the
-  // collection private.
-  it("leaves the earlier public row in place when sharing is switched off", async () => {
+  it("leaves nothing public once sharing is switched off", async () => {
     const cookie = await registerAndVerify(app, alice);
 
     await request(app).post("/api/user-sharing").set("Cookie", cookie).send({ isPublic: true }).expect(201);
     await request(app).post("/api/user-sharing").set("Cookie", cookie).send({ isPublic: false }).expect(201);
 
     const listed = await request(app).get("/api/user-sharing").set("Cookie", cookie);
-    expect(listed.body.map((s: { isPublic: boolean }) => s.isPublic)).toEqual([true, false]);
+    expect(listed.body.map((s: { isPublic: boolean }) => s.isPublic)).toEqual([false]);
+  });
+
+  it("keeps a global setting separate from a per-material one", async () => {
+    const cookie = await registerAndVerify(app, alice);
+    const petg = await storage.createMaterial({ name: "PETG" });
+
+    await request(app).post("/api/user-sharing").set("Cookie", cookie).send({ isPublic: true }).expect(201);
+    await request(app)
+      .post("/api/user-sharing")
+      .set("Cookie", cookie)
+      .send({ materialId: petg.id, isPublic: true })
+      .expect(201);
+
+    const listed = await request(app).get("/api/user-sharing").set("Cookie", cookie);
+    expect(listed.body).toHaveLength(2);
   });
 });

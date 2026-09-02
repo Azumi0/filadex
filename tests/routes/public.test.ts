@@ -281,12 +281,7 @@ describe("GET /api/sharing", () => {
 });
 
 describe("switching sharing off through /api/user-sharing", () => {
-  // KNOWN BUG (recorded, not fixed): /api/user-sharing cannot clear an existing
-  // global share (its delete matches material_id = NULL, which is never true),
-  // so it leaves the old isPublic:true row behind. This endpoint only asks
-  // whether *any* public row exists, so the collection stays public after the
-  // owner has switched sharing off.
-  it("leaves the collection public", async () => {
+  it("makes the collection private again", async () => {
     const withUserRoutes = createApp(registerAuthRoutes, registerPublicRoutes, registerUserRoutes);
     await giveAliceASpoolOf("PLA");
 
@@ -303,7 +298,7 @@ describe("switching sharing off through /api/user-sharing", () => {
 
     const response = await request(withUserRoutes).get(`/api/public/filaments/${aliceId}`);
 
-    expect(response.status).toBe(200);
-    expect(response.body.filaments).toHaveLength(1);
+    expect(response.status).toBe(404);
+    expect(response.body.message).toBe("No public filaments found");
   });
 });
