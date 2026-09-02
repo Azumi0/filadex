@@ -65,6 +65,12 @@ export type UserChanges = {
   forceChangePassword?: boolean;
 };
 
+/** The outcome of upsertUserSharing - `created` decides 201 versus 200. */
+export type UpsertedSharing = {
+  sharing: UserSharing;
+  created: boolean;
+};
+
 /** Per-user settings a user changes about themselves. */
 export type UserPreferences = {
   language?: string;
@@ -192,6 +198,10 @@ export interface IStorage {
   getUserSharing(userId: number): Promise<UserSharing[]>;
   /** Replaces this user's setting for a material - or their global one, when materialId is null. */
   setUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UserSharing>;
+  /** Only the settings that actually share something. */
+  getPublicUserSharing(userId: number): Promise<UserSharing[]>;
+  /** Updates this user's setting for a material in place, or creates it. */
+  upsertUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UpsertedSharing>;
 
   // Filament operations
   getFilaments(userId: number): Promise<Filament[]>;
@@ -229,6 +239,7 @@ export interface IStorage {
 
   // Material operations
   getMaterials(): Promise<Material[]>;
+  getMaterialsByIds(ids: number[]): Promise<Material[]>;
   createMaterial(material: InsertMaterial): Promise<Material>;
   deleteMaterial(id: number): Promise<boolean>;
   updateMaterialOrder(id: number, newOrder: number): Promise<Material | undefined>;
@@ -400,6 +411,33 @@ export class DatabaseStorage implements IStorage {
       .values({ userId, materialId, isPublic })
       .returning();
     return created;
+  }
+
+  async getPublicUserSharing(userId: number): Promise<UserSharing[]> {
+    return await db.select().from(userSharing)
+      .where(and(eq(userSharing.userId, userId), eq(userSharing.isPublic, true)));
+  }
+
+  async upsertUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UpsertedSharing> {
+    // A global setting has a NULL material_id, and `material_id = NULL` is never
+    // true, so finding it needs IS NULL.
+    const [existing] = await db.select().from(userSharing).where(and(
+      eq(userSharing.userId, userId),
+      materialId === null ? isNull(userSharing.materialId) : eq(userSharing.materialId, materialId),
+    ));
+
+    if (existing) {
+      const [updated] = await db.update(userSharing)
+        .set({ isPublic })
+        .where(eq(userSharing.id, existing.id))
+        .returning();
+      return { sharing: updated, created: false };
+    }
+
+    const [created] = await db.insert(userSharing)
+      .values({ userId, materialId, isPublic })
+      .returning();
+    return { sharing: created, created: true };
   }
 
   // Filament implementations
@@ -648,6 +686,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Material implementations
+  async getMaterialsByIds(ids: number[]): Promise<Material[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    return await db.select().from(materials).where(inArray(materials.id, ids));
+  }
+
   async getMaterials(): Promise<Material[]> {
     return await db.select().from(materials).orderBy(materials.sortOrder, materials.name);
   }
