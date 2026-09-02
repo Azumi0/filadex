@@ -294,17 +294,16 @@ describe("POST /api/users", () => {
     expect(response.body.message).toBe("Username already exists");
   });
 
-  // KNOWN BUG (recorded, not fixed): unlike self-registration, this endpoint
-  // validates nothing. A missing password reaches bcrypt and blows up as an
-  // opaque 500 rather than a 400 explaining what was wrong.
-  it("answers 500 when no password is given", async () => {
-    const response = await request(app)
-      .post("/api/users")
-      .set("Cookie", adminCookie)
-      .send({ username: "bob" });
+  it.each([
+    ["no password", { username: "bob" }, "Password is required"],
+    ["a password shorter than 8 characters", { username: "bob", password: "short" }, "Password must be at least 8 characters"],
+    ["a username shorter than 3 characters", { username: "ab", password: "bobs-password" }, "Username must be at least 3 characters"],
+    ["a username with punctuation", { username: "not.allowed", password: "bobs-password" }, "Username may only contain letters, numbers, underscores, and hyphens"],
+  ])("rejects %s, applying the same rules as self-registration", async (_label, body, message) => {
+    const response = await request(app).post("/api/users").set("Cookie", adminCookie).send(body);
 
-    expect(response.status).toBe(500);
-    expect(response.body.message).toBe("Server error");
+    expect(response.status).toBe(400);
+    expect(response.body.message).toBe(message);
   });
 });
 

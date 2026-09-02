@@ -113,10 +113,26 @@ export const usernameSchema = z
   .max(30, "Username must be at most 30 characters")
   .regex(/^[a-zA-Z0-9_-]+$/, "Username may only contain letters, numbers, underscores, and hyphens");
 
+// Shared between self-registration and admin-created accounts so the two ways
+// of creating a user cannot drift apart on what counts as an acceptable password.
+export const passwordSchema = z
+  .string({ required_error: "Password is required" })
+  .min(8, "Password must be at least 8 characters");
+
 export const registerSchema = z.object({
   username: usernameSchema,
   email: z.string().email("Please enter a valid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: passwordSchema,
+});
+
+// An admin creating an account skips email verification, so there is no email
+// here - but the username and password rules are the same ones self-registration
+// applies.
+export const adminCreateUserSchema = z.object({
+  username: usernameSchema,
+  password: passwordSchema,
+  isAdmin: z.boolean().optional(),
+  forceChangePassword: z.boolean().optional(),
 });
 
 export const forgotPasswordSchema = z.object({

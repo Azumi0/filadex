@@ -19,7 +19,7 @@ import { Trash2, Edit, UserPlus } from "lucide-react";
 // Create a function to generate the schema with translations
 const createUserFormSchema = (t: (key: string) => string) => z.object({
   username: z.string().min(3, t('users.usernameMinLength')),
-  password: z.string().min(6, t('auth.passwordRequirements')).optional(),
+  password: z.string().min(8, t('auth.passwordTooShort')).optional(),
   isAdmin: z.boolean().default(false),
   forceChangePassword: z.boolean().default(true),
 });

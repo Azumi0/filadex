@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { eq, count, sql, isNull } from "drizzle-orm";
 import { db } from "../db";
-import { users, userSharing } from "../../shared/schema";
+import { users, userSharing, adminCreateUserSchema } from "../../shared/schema";
 import { authenticate, isAdmin, hashPassword } from "../auth";
 import { logger as appLogger } from "../utils/logger";
 import { and } from "drizzle-orm";
@@ -142,7 +142,12 @@ export function registerUserRoutes(app: Express): void {
   // Create a new user (admin only)
   app.post("/api/users", authenticate, isAdmin, async (req, res) => {
     try {
-      const { username, password, isAdmin: makeAdmin, forceChangePassword } = req.body;
+      const parsed = adminCreateUserSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+
+      const { username, password, isAdmin: makeAdmin, forceChangePassword } = parsed.data;
 
       // Check if username already exists (case-insensitive)
       const existingUser = await db.select().from(users).where(sql`LOWER(${users.username}) = LOWER(${username})`);
