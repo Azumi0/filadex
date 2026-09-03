@@ -246,8 +246,8 @@ export interface IStorage {
   // Scheduled notification checks
   /** Everyone who could receive a notification email. */
   getVerifiedUsers(): Promise<User[]>;
-  /** Names of the catalog materials that absorb moisture, for drying reminders. */
-  getHygroscopicMaterialNames(): Promise<string[]>;
+  /** Names of the catalog materials that absorb moisture, for drying reminders - global plus this user's. */
+  getHygroscopicMaterialNames(userId: number): Promise<string[]>;
   markLowStockNotified(filamentIds: number[]): Promise<void>;
   markDryingReminderNotified(filamentIds: number[]): Promise<void>;
 
@@ -313,7 +313,14 @@ export interface IStorage {
   updateManufacturerOrder(id: number, newOrder: number): Promise<Manufacturer | undefined>;
 
   // Material operations
-  getMaterials(): Promise<Material[]>;
+  /** The Global Catalog plus `userId`'s Personal Catalog; the whole table when `userId` is omitted. */
+  getMaterials(userId?: number): Promise<Material[]>;
+  /**
+   * The Catalog Material a declared material names for this user, ignoring case
+   * and checking the Personal Catalog before the Global one. `undefined` when it
+   * resolves to nothing.
+   */
+  resolveMaterial(userId: number, declared: string): Promise<Material | undefined>;
   getMaterialsByIds(ids: number[]): Promise<Material[]>;
   createMaterial(material: InsertMaterial): Promise<Material>;
   deleteMaterial(id: number): Promise<boolean>;
@@ -474,9 +481,12 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(users).where(eq(users.emailVerified, true));
   }
 
-  async getHygroscopicMaterialNames(): Promise<string[]> {
+  async getHygroscopicMaterialNames(userId: number): Promise<string[]> {
     const rows = await db.select({ name: materials.name }).from(materials)
-      .where(eq(materials.isHygroscopic, true));
+      .where(and(
+        eq(materials.isHygroscopic, true),
+        or(isNull(materials.userId), eq(materials.userId, userId)),
+      ));
     return rows.map((row) => row.name);
   }
 
@@ -859,8 +869,23 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(materials).where(inArray(materials.id, ids));
   }
 
-  async getMaterials(): Promise<Material[]> {
-    return await db.select().from(materials).orderBy(materials.sortOrder, materials.name);
+  async getMaterials(userId?: number): Promise<Material[]> {
+    const scope = userId === undefined
+      ? undefined
+      : or(isNull(materials.userId), eq(materials.userId, userId));
+    return await db.select().from(materials).where(scope).orderBy(materials.sortOrder, materials.name);
+  }
+
+  async resolveMaterial(userId: number, declared: string): Promise<Material | undefined> {
+    const [row] = await db.select().from(materials)
+      .where(and(
+        eqIgnoreCase(materials.name, declared),
+        or(eq(materials.userId, userId), isNull(materials.userId)),
+      ))
+      // The user's own Personal Catalog row wins when a Global one also matches.
+      .orderBy(sql`${materials.userId} IS NULL`)
+      .limit(1);
+    return row ?? undefined;
   }
 
   async createMaterial(insertMaterial: InsertMaterial): Promise<Material> {
