@@ -1133,53 +1133,29 @@ Returns the sharing settings for the authenticated user.
 
 ### Update User Sharing Settings
 
-Updates the sharing settings for the authenticated user.
+Replaces the authenticated user's sharing setting for one material, or their
+global setting when `materialId` is omitted.
 
-- **URL**: `/api/sharing`
+- **URL**: `/api/user-sharing`
 - **Method**: `POST`
 - **Authentication**: Required
 - **Request Body**:
   ```json
   {
-    "shareAll": "boolean",
-    "materials": [
-      {
-        "id": "number",
-        "isPublic": "boolean"
-      }
-    ]
+    "materialId": "number | null",
+    "isPublic": "boolean"
   }
   ```
-- **Response**: `200 OK`
+- **Response**: `201 Created`
   ```json
   {
-    "message": "Sharing preferences updated"
+    "id": "number",
+    "userId": "number",
+    "isPublic": "boolean",
+    "materialId": "number",
+    "createdAt": "string",
+    "updatedAt": "string"
   }
-  ```
-- **Error Responses**:
-  - `400 Bad Request`: Validation error
-  - `401 Unauthorized`: Not authenticated
-  - `500 Internal Server Error`: Server error
-
-### Get Sharing Settings
-
-Returns the sharing settings for the authenticated user.
-
-- **URL**: `/api/sharing`
-- **Method**: `GET`
-- **Authentication**: Required
-- **Response**: `200 OK`
-  ```json
-  [
-    {
-      "id": "number",
-      "userId": "number",
-      "isPublic": "boolean",
-      "materialId": "number",
-      "createdAt": "string",
-      "updatedAt": "string"
-    }
-  ]
   ```
 - **Error Responses**:
   - `401 Unauthorized`: Not authenticated
@@ -1187,7 +1163,7 @@ Returns the sharing settings for the authenticated user.
 
 ### Get Public Filaments
 
-Returns the public filaments for a specific user, according to their sharing settings (globally public, or scoped to specific materials via `POST /api/sharing`).
+Returns the public filaments for a specific user, according to their sharing settings (globally public, or scoped to specific materials via `POST /api/user-sharing`).
 
 - **URL**: `/api/public/filaments/:userId`
 - **Method**: `GET`

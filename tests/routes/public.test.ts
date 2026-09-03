@@ -1,6 +1,6 @@
 /**
  * Characterisation tests for server/routes/public.ts - the unauthenticated
- * sharing path, plus the /api/sharing endpoints that control it.
+ * sharing path, driven through the /api/user-sharing endpoint that controls it.
  *
  * These record observable behaviour at the HTTP boundary, so that moving the
  * database access behind IStorage can be shown to change nothing. They are not
@@ -27,7 +27,7 @@ let aliceId: number;
 const alice = { username: "alice", email: "alice@example.com", password: "correct-horse" }; // ggignore
 
 beforeEach(async () => {
-  app = createApp(registerAuthRoutes, registerPublicRoutes);
+  app = createApp(registerAuthRoutes, registerPublicRoutes, registerUserRoutes);
   aliceCookie = await registerAndVerify(app, alice);
   const me = await request(app).get("/api/auth/me").set("Cookie", aliceCookie);
   aliceId = me.body.id;
@@ -46,8 +46,8 @@ async function giveAliceASpoolOf(material: string, name = `${material} spool`) {
 }
 
 async function share(cookie: string, body: Record<string, unknown>) {
-  const response = await request(app).post("/api/sharing").set("Cookie", cookie).send(body);
-  expect([200, 201]).toContain(response.status);
+  const response = await request(app).post("/api/user-sharing").set("Cookie", cookie).send(body);
+  expect(response.status).toBe(201);
   return response.body;
 }
 
@@ -203,125 +203,6 @@ describe("GET /api/public/filaments/:userId", () => {
   });
 });
 
-describe("POST /api/sharing", () => {
-  it("rejects a request with no session cookie", async () => {
-    const response = await request(app).post("/api/sharing").send({ isPublic: true });
-
-    expect(response.status).toBe(401);
-  });
-
-  it("creates a global sharing setting", async () => {
-    const response = await request(app)
-      .post("/api/sharing")
-      .set("Cookie", aliceCookie)
-      .send({ isPublic: true });
-
-    expect(response.status).toBe(201);
-    expect(response.body).toMatchObject({ userId: aliceId, materialId: null, isPublic: true });
-  });
-
-  it("updates the existing global setting instead of adding a second", async () => {
-    await share(aliceCookie, { isPublic: true });
-
-    const response = await request(app)
-      .post("/api/sharing")
-      .set("Cookie", aliceCookie)
-      .send({ isPublic: false });
-
-    expect(response.status).toBe(200);
-    expect(response.body.isPublic).toBe(false);
-
-    const listed = await request(app).get("/api/sharing").set("Cookie", aliceCookie);
-    expect(listed.body).toHaveLength(1);
-  });
-
-  // Every release before the one that fixed it left a duplicate global row
-  // behind on each toggle, so an upgraded database arrives with several - and
-  // getPublicUserSharing takes any row with is_public, so one stale `true` is
-  // enough to keep a collection public. Switching sharing off has to collapse
-  // them, or this endpoint can never undo the damage.
-  it("collapses duplicate global rows left by an older release", async () => {
-    await giveAliceASpoolOf("PLA");
-    await db.insert(userSharing).values([
-      { userId: aliceId, materialId: null, isPublic: true },
-      { userId: aliceId, materialId: null, isPublic: false },
-      { userId: aliceId, materialId: null, isPublic: true },
-    ]);
-
-    const response = await request(app)
-      .post("/api/sharing")
-      .set("Cookie", aliceCookie)
-      .send({ isPublic: false });
-
-    expect(response.status).toBe(200);
-    expect(response.body.isPublic).toBe(false);
-
-    const listed = await request(app).get("/api/sharing").set("Cookie", aliceCookie);
-    expect(listed.body).toHaveLength(1);
-    expect(listed.body[0].isPublic).toBe(false);
-
-    const publicView = await request(app).get(`/api/public/filaments/${aliceId}`);
-    expect(publicView.status).toBe(404);
-  });
-
-  it("keeps per-material and global settings as separate rows", async () => {
-    const petg = await storage.createMaterial({ name: "PETG" });
-    await share(aliceCookie, { isPublic: true });
-    await share(aliceCookie, { materialId: petg.id, isPublic: true });
-
-    const listed = await request(app).get("/api/sharing").set("Cookie", aliceCookie);
-
-    expect(listed.body).toHaveLength(2);
-    expect(listed.body.map((s: { materialId: number | null }) => s.materialId)).toEqual(
-      expect.arrayContaining([null, petg.id]),
-    );
-  });
-
-  it("updates the existing per-material setting instead of adding a second", async () => {
-    const petg = await storage.createMaterial({ name: "PETG" });
-    await share(aliceCookie, { materialId: petg.id, isPublic: true });
-
-    const response = await request(app)
-      .post("/api/sharing")
-      .set("Cookie", aliceCookie)
-      .send({ materialId: petg.id, isPublic: false });
-
-    expect(response.status).toBe(200);
-    expect(response.body.isPublic).toBe(false);
-
-    const listed = await request(app).get("/api/sharing").set("Cookie", aliceCookie);
-    expect(listed.body).toHaveLength(1);
-  });
-});
-
-describe("GET /api/sharing", () => {
-  it("rejects a request with no session cookie", async () => {
-    const response = await request(app).get("/api/sharing");
-
-    expect(response.status).toBe(401);
-  });
-
-  it("starts with nothing shared", async () => {
-    const response = await request(app).get("/api/sharing").set("Cookie", aliceCookie);
-
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual([]);
-  });
-
-  it("shows a user only their own settings", async () => {
-    await share(aliceCookie, { isPublic: true });
-    const bobCookie = await registerAndVerify(app, {
-      username: "bob",
-      email: "bob@example.com",
-      password: "bobs-password",
-    });
-
-    const response = await request(app).get("/api/sharing").set("Cookie", bobCookie);
-
-    expect(response.body).toEqual([]);
-  });
-});
-
 describe("switching sharing off through /api/user-sharing", () => {
   it("makes the collection private again", async () => {
     const withUserRoutes = createApp(registerAuthRoutes, registerPublicRoutes, registerUserRoutes);
@@ -342,5 +223,32 @@ describe("switching sharing off through /api/user-sharing", () => {
 
     expect(response.status).toBe(404);
     expect(response.body.message).toBe("No public filaments found");
+  });
+
+  // Every release before the one that fixed it left a duplicate global row
+  // behind on each toggle, so an upgraded database arrives with several - and
+  // getPublicUserSharing takes any row with is_public, so one stale `true` is
+  // enough to keep a collection public. Switching sharing off has to collapse
+  // them, or it can never undo the damage.
+  it("collapses duplicate global rows left by an older release", async () => {
+    await giveAliceASpoolOf("PLA");
+    await db.insert(userSharing).values([
+      { userId: aliceId, materialId: null, isPublic: true },
+      { userId: aliceId, materialId: null, isPublic: false },
+      { userId: aliceId, materialId: null, isPublic: true },
+    ]);
+
+    await request(app)
+      .post("/api/user-sharing")
+      .set("Cookie", aliceCookie)
+      .send({ isPublic: false })
+      .expect(201);
+
+    const listed = await request(app).get("/api/user-sharing").set("Cookie", aliceCookie);
+    expect(listed.body).toHaveLength(1);
+    expect(listed.body[0].isPublic).toBe(false);
+
+    const publicView = await request(app).get(`/api/public/filaments/${aliceId}`);
+    expect(publicView.status).toBe(404);
   });
 });
