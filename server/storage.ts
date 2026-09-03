@@ -289,8 +289,6 @@ export interface IStorage {
 
   // Filament operations
   getFilaments(userId: number): Promise<Filament[]>;
-  /** UNUSED - see the note on the implementation, and TODO.md. */
-  getPublicFilamentsWithUser(userId: number, filterFn?: (filament: Filament) => boolean): Promise<{filaments: Filament[], user: {id: number, username: string}}>;
   getFilament(id: number, userId: number): Promise<Filament | undefined>;
   createFilament(filament: InsertFilament): Promise<Filament>;
   updateFilament(id: number, filament: Partial<InsertFilament>, userId: number): Promise<Filament | undefined>;
@@ -681,42 +679,6 @@ export class DatabaseStorage implements IStorage {
     return await db.select(FILAMENT_SELECT_COLUMNS).from(filaments)
       .innerJoin(filamentTypes, eq(filaments.filamentTypeId, filamentTypes.id))
       .where(eq(filaments.userId, userId));
-  }
-
-  // UNUSED. Nothing calls this. routes/public.ts serves the public collection
-  // by composing getUser + getFilaments instead, because it has to answer 404
-  // for a missing user while this throws. Either give it a shape that route can
-  // use, or delete it - as it stands it will drift from the behaviour it
-  // duplicates. See TODO.md, Technical Debt.
-  async getPublicFilamentsWithUser(userId: number, filterFn?: (filament: Filament) => boolean): Promise<{filaments: Filament[], user: {id: number, username: string}}> {
-    // Get user information
-    const [user] = await db.select({
-      id: users.id,
-      username: users.username
-    }).from(users).where(eq(users.id, userId));
-
-    if (!user) {
-      throw new Error(`User with ID ${userId} not found`);
-    }
-
-    logger.debug(`Getting public filaments for user: ${user.username} (ID: ${userId})`);
-
-    // Get filaments
-    const allFilaments = await this.getFilaments(userId);
-
-    // Apply filter if provided
-    const filteredFilaments = filterFn ? allFilaments.filter(filterFn) : allFilaments;
-
-    logger.debug(`Found ${filteredFilaments.length} public filaments for user ${user.username}`);
-
-    // Return filaments with user information
-    return {
-      filaments: filteredFilaments,
-      user: {
-        id: user.id,
-        username: user.username
-      }
-    };
   }
 
   async getFilament(id: number, userId: number): Promise<Filament | undefined> {
