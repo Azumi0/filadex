@@ -57,11 +57,13 @@ This document contains a list of pending tasks and improvements for the Filadex 
 - [ ] **`filaments.created_at` / `filaments.updated_at` are dead columns**: created by `docker-entrypoint.sh` and never read or written by the application. They are declared in `shared/schema.ts` so it matches the deployed database, and excluded from the API-facing `Filament` type. Drop them once there is a migration path that can do it safely.
 - [ ] **Timestamp columns are inconsistently typed**: the tables `docker-entrypoint.sh` creates use `timestamp with time zone`; everything added later by the migration scripts uses `timestamp without time zone`. `shared/schema.ts` now records both, because narrowing the former would discard each value's UTC offset and reinterpret it in the server's local zone. Worth unifying on `timestamptz` one day, with a migration that converts explicitly rather than by accident.
 - [ ] **`PUT /api/settings/email` depends on a row it cannot create**: the email settings row is seeded by a migration, and the endpoint answers 500 if it is missing. It should upsert.
+- [ ] **CONTRIBUTING.md claims lint tooling the repository does not have**: it states "All JavaScript code is linted with ESLint and formatted with Prettier", but there is no ESLint or Prettier config in the repository and neither is a dependency in `package.json`. Every rule under the JavaScript styleguide is therefore unenforceable - a contributor cannot run the check the guideline implies, and a reviewer has to apply those rules by hand. Two honest ways out: add ESLint and Prettier with a config that matches the code as it stands (and accept the first formatting commit will be large), or drop the claim and keep the styleguide as prose a human applies. Picking neither is what leaves the guideline lying.
 
 ## Documentation
 
 - [x] **Update API Documentation**: Ensure all API endpoints are properly documented.
 - [ ] **User Guide Updates**: Update the user guide to reflect recent changes and new features.
+- [ ] **The documentation styleguide describes a notation nothing uses**: CONTRIBUTING.md asks that methods and classes be referenced with a custom `{}` notation (`{ClassName}`, `{ClassName.methodName}`), but no document in the repository does this - `docs/`, `README.md` and the ADRs all use backticks. So either the docs need a pass to adopt the notation, or the guideline should be changed to describe what is actually written. The second is probably right: the notation has no tooling behind it, so it buys nothing that backticks do not, and a rule every document ignores only teaches contributors that the guidelines are decorative.
 
 ## Future Enhancements (Backlog)
 

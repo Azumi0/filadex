@@ -255,6 +255,20 @@ order, because that is where the entrypoint ran them. `0000` assumes those
 columns exist, so a database old enough to predate them would otherwise be
 baselined without them.
 
+**Nothing under `migrations/pg/` may be hand-edited, including whitespace.**
+`scripts/migrate.ts` baselines an existing installation by writing the hash of
+the migration file into `drizzle.__drizzle_migrations` without running it, and
+that hash is taken over the file's bytes — the same way drizzle's own migrator
+takes it, which is what makes the baseline recognisable to later `drizzle-kit`
+runs. Appending so much as a trailing newline to `0000_right_mathemanic.sql`
+changes the hash, and every already-baselined deployment would then see a
+migration it does not recognise. This is why those files are the one place in
+the repository that does not follow CONTRIBUTING.md's "end all files with a
+newline": `0000`, `0001` and the three `meta/` files are written by
+`drizzle-kit` and read by hash, so they are generated artefacts rather than
+source. The `meta/` files would revert on the next `npm run db:generate`
+regardless.
+
 The one thing the entrypoint did that `0000` cannot is insert a row: it re-ran
 the whole legacy chain on every start, and `add_email_rbac_and_settings`
 inserted the `email_settings` singleton there. A fresh database now gets the
