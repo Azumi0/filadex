@@ -16,9 +16,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Trash2, Edit, UserPlus } from "lucide-react";
 
-// Create a function to generate the schema with translations
+// Create a function to generate the schema with translations.
+// The username rules mirror usernameSchema in shared/schema.ts, which both
+// /api/users endpoints apply - a form that accepts more than the server does
+// turns a field-level message into an untranslated toast.
 const createUserFormSchema = (t: (key: string) => string) => z.object({
-  username: z.string().min(3, t('users.usernameMinLength')),
+  username: z.string()
+    .min(3, t('users.usernameMinLength'))
+    .max(30, t('auth.usernameTooLong'))
+    .regex(/^[a-zA-Z0-9_-]+$/, t('auth.usernameInvalidChars')),
   password: z.string().min(8, t('auth.passwordTooShort')).optional(),
   isAdmin: z.boolean().default(false),
   forceChangePassword: z.boolean().default(true),

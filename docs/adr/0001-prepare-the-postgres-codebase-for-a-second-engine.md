@@ -258,16 +258,45 @@ baselined without them.
 **Nothing under `migrations/pg/` may be hand-edited, including whitespace.**
 `scripts/migrate.ts` baselines an existing installation by writing the hash of
 the migration file into `drizzle.__drizzle_migrations` without running it, and
-that hash is taken over the file's bytes — the same way drizzle's own migrator
-takes it, which is what makes the baseline recognisable to later `drizzle-kit`
-runs. Appending so much as a trailing newline to `0000_right_mathemanic.sql`
-changes the hash, and every already-baselined deployment would then see a
-migration it does not recognise. This is why those files are the one place in
-the repository that does not follow CONTRIBUTING.md's "end all files with a
-newline": `0000`, `0001` and the three `meta/` files are written by
-`drizzle-kit` and read by hash, so they are generated artefacts rather than
-source. The `meta/` files would revert on the next `npm run db:generate`
-regardless.
+that hash is taken over the file's bytes, the same way drizzle's own migrator
+takes it.
+
+Be precise about what that buys, because the obvious assumption is wrong: as of
+drizzle-orm 0.39.1 the migrator decides what to apply by comparing `created_at`
+against each journal entry's `when`, and the `hash` column is written but never
+read back. A changed hash would therefore *not* cause a baselined deployment to
+re-run or reject a migration today. The reason to keep the bytes stable is that
+this is undocumented internal behaviour of a dependency: the column exists to
+identify the migration, matching drizzle's own writer keeps the row honest, and
+nothing in the baseline should depend on a comparison that the library is free
+to start performing in a later version. Writing a hash that is deliberately not
+the file's hash would be a silent trap for whoever hits that release.
+
+This is why those files are the one place in the repository that does not follow
+CONTRIBUTING.md's "end all files with a newline": `0000`, `0001` and the three
+`meta/` files are written by `drizzle-kit` and identified by hash, so they are
+generated artefacts rather than source. The `meta/` files would revert on the
+next `npm run db:generate` regardless.
+
+**A baseline is a claim, and `scripts/migrate.ts` checks it before making it.**
+`assertMatchesBaseline` compares the live schema against the tables, columns and
+column types parsed out of `0000`'s own SQL, and refuses to record the baseline
+if they differ. This matters because baselining is what stops the legacy chain
+from ever running again: before it, a database that the chain had failed to
+bring up to shape was re-attempted on every boot and healed itself once the
+cause was fixed; after it, that database is declared correct and stays broken.
+Three real cases produce exactly that, and each is caught here rather than at the
+first request:
+
+- Several legacy scripts log a warning and continue when the database user does
+  not own the table they have to `ALTER` — `add_user_id_column` and
+  `drop_filament_type_columns` both do, deliberately, because the entrypoint
+  re-ran them. Their "completed successfully" is not evidence.
+- The base tables were created by the entrypoint's `CREATE TABLE` block, not by
+  anything in `migrations/legacy`, so an installation missing one never gets it
+  from the chain.
+- A schema built with `drizzle-kit push` has plain `timestamp` where `0000` has
+  `timestamp with time zone`, which changes what the application reads back.
 
 The one thing the entrypoint did that `0000` cannot is insert a row: it re-ran
 the whole legacy chain on every start, and `add_email_rbac_and_settings`
@@ -329,6 +358,26 @@ upgrade, not the newest: its `users` table predates `language`, `currency` and
 `temperature_unit`. A fixture that already had them would never exercise the
 chain entry that adds them.
 
+Be exact about the window those six checks cover, because "every row survives
+byte-identical" sounds like it covers more than it does. The snapshot is taken
+after the legacy chain has already run, which is correct for what it is testing:
+the old entrypoint ran that chain on every boot, so a database arriving at this
+upgrade has been through it many times, and within that window the chain really
+is a no-op. But it means the one legacy step that *rewrites* data rather than
+adding to it — the `filament_types` backfill and the column drop that follows —
+happens before the first snapshot and is invisible to all six. The seed cannot
+close the gap either: it inserts through `shared/schema.ts`, which describes the
+shape those columns were dropped into and can no longer express a flat
+pre-migration `filaments` row.
+
+So there is a seventh check, `verifyBackfill`, which builds its own database,
+stops before the chain, seeds flat rows through raw SQL, runs the chain, and
+compares across it: every spool survives, keeps its name, owner and weights,
+gains a `filament_type_id`, and the type it points at carries the manufacturer,
+material, colour, diameter and print temperature the flat row had. It also pins
+the grouping — two spools of one product share a type, the same product owned by
+two users does not — and that the dropped columns are actually gone.
+
 This is not decoration. It is how the email-verification bug below was found.
 
 ## Bugs found, and how
@@ -358,6 +407,37 @@ The last is the odd one out: it was found reviewing this branch rather than by
 the work, and it predates the branch — `main` has the same empty 200. It is
 fixed here anyway, because the file was being rewritten regardless and the fix
 is one branch and one test.
+
+## Behaviour changes that need release notes
+
+Fixing a bug changes behaviour, and two of these change it in ways an
+administrator can see without having done anything. Neither belongs only in this
+document — both go in the release notes for the version that ships them.
+
+**Case-insensitive material matching can make a spool public that was not.**
+Consolidating the two matchers into `server/utils/materials.ts` fixed
+per-material sharing, and the fix widens what `GET /api/public/filaments/:userId`
+returns. A user who shares the catalog material `PLA` and owns a spool whose
+free-text material reads `pla` — from a SpoolmanDB import, or typed that way —
+was previously not sharing that spool and now is. The new behaviour is the
+intended one; the point is that it takes effect on upgrade, with no user action
+and no notification, on an endpoint that needs no authentication. Anyone
+upgrading should be told to re-check what their public collection contains.
+
+**Timestamps read back correctly, which means they read back differently.**
+The ten columns recovered as `timestamp with time zone` were previously mapped
+by discarding the stored UTC offset and reinterpreting the value in the server's
+zone. On a deployment whose Postgres session is not UTC, `createdAt` and
+`lastLogin` in `GET /api/auth/me` and `GET /api/users` will shift by that offset
+across the upgrade — the new value is the right one. Nothing in the test suite
+catches this, because the containers it runs against are UTC.
+
+There is also a case this does *not* fix. The legacy chain never converts a
+column's type, so a database created by `drizzle-kit push` — which
+`docs/DEVELOPMENT.md` used to recommend — has plain `timestamp` for those ten
+columns and would read them in the Node process's local zone. `scripts/migrate.ts`
+now refuses to baseline such a database rather than declaring it correct; see
+`assertMatchesBaseline` above.
 
 ## Consequences
 

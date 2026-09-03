@@ -54,6 +54,16 @@ pull request (`.github/workflows/test.yml`), which is what makes "frozen" safe:
 these scripts are otherwise exercised only during a real upgrade, where finding
 out they broke is too late.
 
+That row comparison runs *after* this chain, on the shape a real installation
+arrives in — the old entrypoint ran the chain on every boot, so by the time a
+deployment upgrades it has run many times and is a no-op. It therefore says
+nothing about the one step here that rewrites data rather than adding to it:
+`add_filament_types` backfilling `filament_types` and `drop_filament_type_columns`
+removing the originals. That step has its own check, `verifyBackfill` in
+`scripts/verify-upgrade.ts`, which seeds flat pre-migration rows through raw SQL
+before the chain runs and compares each spool's product identity across it. If
+you change either of those two scripts, that is the check that will catch you.
+
 ## Not part of the chain
 
 `add_timestamp_columns` was never wired into `docker-entrypoint.sh`, so no

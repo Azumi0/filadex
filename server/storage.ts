@@ -643,12 +643,26 @@ export class DatabaseStorage implements IStorage {
   async upsertUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UpsertedSharing> {
     // A global setting has a NULL material_id, and `material_id = NULL` is never
     // true, so finding it needs IS NULL.
-    const [existing] = await db.select().from(userSharing).where(and(
+    //
+    // There may be more than one row here. Nothing stops it at the schema level,
+    // and every release before the one that fixed it left a duplicate behind on
+    // each toggle. Updating only the row that happened to come back first would
+    // leave the others deciding the answer - getPublicUserSharing takes any row
+    // with is_public, so a stale `true` keeps a collection public after it was
+    // set to private. The oldest row wins and the rest go, which is what makes
+    // this endpoint able to clean up the damage rather than only setUserSharing.
+    const duplicates = await db.select().from(userSharing).where(and(
       eq(userSharing.userId, userId),
       materialId === null ? isNull(userSharing.materialId) : eq(userSharing.materialId, materialId),
-    ));
+    )).orderBy(userSharing.id);
+
+    const [existing, ...extra] = duplicates;
 
     if (existing) {
+      if (extra.length > 0) {
+        await db.delete(userSharing).where(inArray(userSharing.id, extra.map((row) => row.id)));
+      }
+
       const [updated] = await db.update(userSharing)
         .set({ isPublic })
         .where(eq(userSharing.id, existing.id))

@@ -15,16 +15,23 @@ import { entrypointSchemaSql } from "./legacy-migrations";
 import { runLegacyMigrations } from "../migrations/legacy";
 
 
-export async function buildLegacyDatabase() {
+/**
+ * `runChain: false` stops after the base schema, before migrations/legacy has
+ * run. That is the only point at which `filaments` still has the flat
+ * product-identity columns, so it is the only point at which rows that exercise
+ * the filament_types backfill can be inserted - shared/schema.ts describes the
+ * shape those columns were dropped into and cannot express the old one.
+ */
+export async function buildLegacyDatabase({ runChain = true }: { runChain?: boolean } = {}) {
   const container = await new PostgreSqlContainer("postgres:15-alpine").start();
   const url = container.getConnectionUri();
   const pool = new pg.Pool({ connectionString: url });
 
   await pool.query(entrypointSchemaSql());
 
-  await runLegacyMigrations(drizzle(pool));
+  if (runChain) await runLegacyMigrations(drizzle(pool));
 
-  return { container, pool, url };
+  return { container, pool, url, runChain: () => runLegacyMigrations(drizzle(pool)) };
 }
 
 /** A stable, diffable description of everything that matters about the schema. */

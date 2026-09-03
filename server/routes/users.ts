@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { type User, adminCreateUserSchema } from "../../shared/schema";
+import { type User, adminCreateUserSchema, adminUpdateUserSchema } from "../../shared/schema";
 import { authenticate, isAdmin, hashPassword } from "../auth";
 import { storage, type UserChanges, type UserPreferences } from "../storage";
 import { logger as appLogger } from "../utils/logger";
@@ -172,7 +172,12 @@ export function registerUserRoutes(app: Express): void {
         return res.status(400).json({ message: "Invalid user ID" });
       }
 
-      const { username, password, isAdmin: makeAdmin, forceChangePassword } = req.body;
+      const parsed = adminUpdateUserSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+
+      const { username, password, isAdmin: makeAdmin, forceChangePassword } = parsed.data;
 
       // Check if user exists
       const existingUser = await storage.getUser(id);

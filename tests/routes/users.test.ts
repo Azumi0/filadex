@@ -511,6 +511,41 @@ describe("PUT /api/users/:id", () => {
     });
     await expect(loginAs(app, "bob", "bobs-password")).resolves.toBeTruthy();
   });
+
+  // Renaming applies the same rules as creating, or a name POST /api/users
+  // refuses could still be reached by creating a valid one and renaming it.
+  it.each([
+    ["a username shorter than 3 characters", { username: "ab" }, "Username must be at least 3 characters"],
+    ["a username longer than 30 characters", { username: "b".repeat(31) }, "Username must be at most 30 characters"],
+    ["a username with punctuation", { username: "not.allowed" }, "Username may only contain letters, numbers, underscores, and hyphens"],
+    ["a password shorter than 8 characters", { password: "short" }, "Password must be at least 8 characters"],
+  ])("rejects %s, applying the same rules as creating an account", async (_label, body, message) => {
+    const bob = await createUserAsAdmin({ username: "bob", password: "bobs-password" });
+
+    const response = await request(app).put(`/api/users/${bob.id}`).set("Cookie", adminCookie).send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body.message).toBe(message);
+
+    const unchanged = await storage.getUser(bob.id);
+    expect(unchanged?.username).toBe("bob");
+    await expect(loginAs(app, "bob", "bobs-password")).resolves.toBeTruthy();
+  });
+
+  // The endpoint validated nothing before, so an empty string meant "leave this
+  // alone" - the edit form still sends one for a password it did not touch.
+  it("treats an empty username or password as a field to leave alone", async () => {
+    const bob = await createUserAsAdmin({ username: "bob", password: "bobs-password" });
+
+    const response = await request(app)
+      .put(`/api/users/${bob.id}`)
+      .set("Cookie", adminCookie)
+      .send({ username: "", password: "", forceChangePassword: false });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ username: "bob", forceChangePassword: false });
+    await expect(loginAs(app, "bob", "bobs-password")).resolves.toBeTruthy();
+  });
 });
 
 describe("DELETE /api/users/:id", () => {

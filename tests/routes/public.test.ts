@@ -14,6 +14,8 @@ import { registerAuthRoutes } from "../../server/routes/auth";
 import { registerPublicRoutes } from "../../server/routes/public";
 import { registerUserRoutes } from "../../server/routes/users";
 import { storage } from "../../server/storage";
+import { db } from "../helpers/db";
+import { userSharing } from "../../shared/schema";
 import { createApp, registerAndVerify } from "../helpers/app";
 
 let app: Express;
@@ -231,6 +233,35 @@ describe("POST /api/sharing", () => {
 
     const listed = await request(app).get("/api/sharing").set("Cookie", aliceCookie);
     expect(listed.body).toHaveLength(1);
+  });
+
+  // Every release before the one that fixed it left a duplicate global row
+  // behind on each toggle, so an upgraded database arrives with several - and
+  // getPublicUserSharing takes any row with is_public, so one stale `true` is
+  // enough to keep a collection public. Switching sharing off has to collapse
+  // them, or this endpoint can never undo the damage.
+  it("collapses duplicate global rows left by an older release", async () => {
+    await giveAliceASpoolOf("PLA");
+    await db.insert(userSharing).values([
+      { userId: aliceId, materialId: null, isPublic: true },
+      { userId: aliceId, materialId: null, isPublic: false },
+      { userId: aliceId, materialId: null, isPublic: true },
+    ]);
+
+    const response = await request(app)
+      .post("/api/sharing")
+      .set("Cookie", aliceCookie)
+      .send({ isPublic: false });
+
+    expect(response.status).toBe(200);
+    expect(response.body.isPublic).toBe(false);
+
+    const listed = await request(app).get("/api/sharing").set("Cookie", aliceCookie);
+    expect(listed.body).toHaveLength(1);
+    expect(listed.body[0].isPublic).toBe(false);
+
+    const publicView = await request(app).get(`/api/public/filaments/${aliceId}`);
+    expect(publicView.status).toBe(404);
   });
 
   it("keeps per-material and global settings as separate rows", async () => {

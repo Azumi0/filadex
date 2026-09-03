@@ -19,9 +19,11 @@ jobs:
       - run: npm test
 
   # Proves that a database created by an older Filadex still upgrades cleanly:
-  # every row preserved, and the same schema a fresh install gets. This is what
-  # keeps migrations/legacy honest - those scripts are frozen and are otherwise
-  # only exercised on a real upgrade, where finding out they broke is too late.
+  # every row preserved, the same schema a fresh install gets, and every spool
+  # carried across the filament_types backfill with its product identity intact.
+  # This is what keeps migrations/legacy honest - those scripts are frozen and
+  # are otherwise only exercised on a real upgrade, where finding out they broke
+  # is too late.
   upgrade:
     runs-on: ubuntu-latest
     steps:

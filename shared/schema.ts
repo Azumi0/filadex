@@ -153,14 +153,41 @@ export const registerSchema = z.object({
   password: passwordSchema,
 });
 
+// Both admin endpoints were unvalidated before, so anything that sent a
+// JSON-ish boolean worked. Rejecting "true" or 1 now would break a caller that
+// has been doing it for releases, which is not a change either endpoint set out
+// to make, so those forms are still accepted and normalised here.
+const flexibleBoolean = z.preprocess((value) => {
+  if (value === "true" || value === 1 || value === "1") return true;
+  if (value === "false" || value === 0 || value === "0") return false;
+  return value;
+}, z.boolean());
+
 // An admin creating an account skips email verification, so there is no email
 // here - but the username and password rules are the same ones self-registration
 // applies.
 export const adminCreateUserSchema = z.object({
   username: usernameSchema,
   password: passwordSchema,
-  isAdmin: z.boolean().optional(),
-  forceChangePassword: z.boolean().optional(),
+  isAdmin: flexibleBoolean.optional(),
+  forceChangePassword: flexibleBoolean.optional(),
+});
+
+// Editing a user applies the same rules to the fields it is given. Every field
+// is optional - the endpoint is a partial update - but a username or password
+// that arrives has to satisfy what creating one would, or a name the system
+// refuses to create could still be set by renaming into it.
+// An empty string means "leave this alone" rather than "set it to nothing":
+// the edit form clears the password field it did not touch, and the endpoint
+// skipped falsy values before this was validated at all.
+const omitIfBlank = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
+
+export const adminUpdateUserSchema = z.object({
+  username: omitIfBlank(usernameSchema),
+  password: omitIfBlank(passwordSchema),
+  isAdmin: flexibleBoolean.optional(),
+  forceChangePassword: flexibleBoolean.optional(),
 });
 
 export const forgotPasswordSchema = z.object({
