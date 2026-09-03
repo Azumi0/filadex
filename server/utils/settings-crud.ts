@@ -32,7 +32,9 @@ export interface CrudEntityConfig<T extends { id: number }, InsertT> {
   csvFilename: string;
   insertSchema: ZodType<InsertT>;
   storage: {
-    getAll: () => Promise<T[]>;
+    // `userId` is the caller; only the user-scoped entities (materials) read it,
+    // to list the Global Catalog plus that user's Personal Catalog.
+    getAll: (userId?: number) => Promise<T[]>;
     create: (data: InsertT) => Promise<T>;
     delete: (id: number) => Promise<boolean>;
     updateOrder?: (id: number, newOrder: number) => Promise<T | undefined>;
@@ -56,7 +58,7 @@ export function registerCrudSettingsRoutes<T extends { id: number }, InsertT>(
 
   app.get(basePath, authenticate, async (req, res) => {
     try {
-      const items = await entityStorage.getAll();
+      const items = await entityStorage.getAll(req.userId);
 
       if (req.query.export === "csv") {
         res.setHeader("Content-Type", "text/csv");

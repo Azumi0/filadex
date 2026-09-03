@@ -151,6 +151,8 @@ type FilamentTypeFieldsInput = {
 // of the filament-type/spool-instance split: identical spools bought again
 // reuse the same type row instead of duplicating manufacturer/material/etc.
 async function findOrCreateFilamentType(userId: number, fields: FilamentTypeFieldsInput): Promise<number> {
+  await ensureDeclaredMaterialResolves(userId, fields.material);
+
   const manufacturer = fields.manufacturer ?? null;
   const colorCode = fields.colorCode ?? null;
   const diameter = fields.diameter ?? null;
@@ -179,6 +181,24 @@ async function findOrCreateFilamentType(userId: number, fields: FilamentTypeFiel
     printTemp,
   }).returning();
   return created.id;
+}
+
+// A declared material that resolves to no Catalog Material is registered into
+// the declaring user's Personal Catalog, so from here on every declared material
+// resolves to a row - the point of docs/adr/0003. This fires on every path
+// through find-or-create: manual create, edit, CSV import, Spoolman import. The
+// name is stored exactly as the user typed it; density and is_hygroscopic stay
+// at their neutral defaults, and phase 2 makes the row visible to fill in or
+// delete.
+async function ensureDeclaredMaterialResolves(userId: number, declared: string): Promise<void> {
+  if (await storage.resolveMaterial(userId, declared)) return;
+
+  // Two concurrent requests declaring the same new material both resolve to
+  // nothing and both insert; the partial unique index rejects the second. Let
+  // it be a no-op rather than a 500 - the row exists either way afterwards.
+  await db.insert(materials)
+    .values({ userId, name: declared, density: null, isHygroscopic: false })
+    .onConflictDoNothing();
 }
 
 // Selection shape shared by every filament read - the spool instance's own

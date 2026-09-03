@@ -43,7 +43,7 @@ export function registerSettingsRoutes(app: Express): void {
     csvFilename: "materials.csv",
     insertSchema: insertMaterialSchema,
     storage: {
-      getAll: () => storage.getMaterials(),
+      getAll: (userId) => storage.getMaterials(userId),
       create: (data) => storage.createMaterial(data),
       delete: (id) => storage.deleteMaterial(id),
       updateOrder: (id, newOrder) => storage.updateMaterialOrder(id, newOrder),
