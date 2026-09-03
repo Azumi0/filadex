@@ -119,11 +119,6 @@ export const insertUserSchema = createInsertSchema(users).pick({
   temperatureUnit: true,
 });
 
-export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, "Current password is required"),
-  newPassword: z.string().min(6, "Password must be at least 6 characters"),
-});
-
 export const updateThemeSchema = z.object({
   variant: z.string().min(1).optional(),
   primary: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be a hex color like #EA580C").optional(),
@@ -146,6 +141,15 @@ export const usernameSchema = z
 export const passwordSchema = z
   .string({ required_error: "Password is required" })
   .min(8, "Password must be at least 8 characters");
+
+// newPassword uses passwordSchema so changing your password is held to the same
+// length as registering: a user could otherwise register with 8 and immediately
+// downgrade. The rule binds the password being set, not one already stored -
+// short existing passwords keep working at login.
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Current password is required"),
+  newPassword: passwordSchema,
+});
 
 export const registerSchema = z.object({
   username: usernameSchema,

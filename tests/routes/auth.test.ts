@@ -10,6 +10,8 @@ import { beforeEach, describe, expect, it, afterEach, vi } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { registerAuthRoutes } from "../../server/routes/auth";
+import { hashPassword } from "../../server/auth";
+import { storage } from "../../server/storage";
 import { createApp, loginAs, registerAndVerify } from "../helpers/app";
 import { lastMailTo, mailbox, tokenFromMail } from "../helpers/mailbox";
 
@@ -563,16 +565,46 @@ describe("POST /api/auth/change-password", () => {
     expect(response.body.message).toBe("Current password is incorrect");
   });
 
-  it("rejects a new password shorter than 6 characters", async () => {
+  it("rejects a new password shorter than 8 characters", async () => {
     const cookie = await registerAndVerify(app, alice);
 
     const response = await request(app)
       .post("/api/auth/change-password")
       .set("Cookie", cookie)
       // A deliberately too-short mock password, not a real credential.
-      .send({ currentPassword: alice.password, newPassword: "abcde" }); // ggignore
+      .send({ currentPassword: alice.password, newPassword: "abcdefg" }); // ggignore
 
     expect(response.status).toBe(400);
     expect(response.body.message).toBe("Invalid input");
+  });
+
+  it("accepts a new password of exactly 8 characters", async () => {
+    const cookie = await registerAndVerify(app, alice);
+
+    const response = await request(app)
+      .post("/api/auth/change-password")
+      .set("Cookie", cookie)
+      // A deliberately minimal-length mock password, not a real credential.
+      .send({ currentPassword: alice.password, newPassword: "abcdefgh" }); // ggignore
+
+    expect(response.status).toBe(200);
+    await expect(loginAs(app, alice.username, "abcdefgh")).resolves.toBeTruthy();
+  });
+
+  // The length rule binds a password being set, not one already stored, so an
+  // account whose password predates the rule keeps working at login.
+  it("still lets a user with a short stored password log in", async () => {
+    const shortPassword = "abcde"; // ggignore - too short for today's rule, seeded directly
+    await storage.createUser({
+      username: "shorty",
+      password: await hashPassword(shortPassword),
+      email: "shorty@example.com",
+      role: "user",
+      isAdmin: false,
+      emailVerified: true,
+      forceChangePassword: false,
+    });
+
+    await expect(loginAs(app, "shorty", shortPassword)).resolves.toBeTruthy();
   });
 });

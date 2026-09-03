@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 // Create a function to generate the schema with translations
 const createChangePasswordSchema = (t: (key: string) => string) => z.object({
   currentPassword: z.string().min(1, t('auth.currentPasswordRequired')),
-  newPassword: z.string().min(6, t('auth.passwordRequirements')),
+  newPassword: z.string().min(8, t('auth.passwordTooShort')),
   confirmPassword: z.string().min(1, t('auth.confirmPasswordRequired')),
 }).refine(data => data.newPassword === data.confirmPassword, {
   message: t('auth.passwordsDontMatch'),
