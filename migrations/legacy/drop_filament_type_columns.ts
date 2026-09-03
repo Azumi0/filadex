@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db } from "../server/db";
+import type { LegacyDatabase } from "./types";
 
 /**
  * Migration: drops the product-identity columns from `filaments` now that
@@ -9,10 +9,8 @@ import { db } from "../server/db";
  * anything if any filament still lacks a filament_type_id (i.e. the backfill
  * hasn't completed/succeeded yet), which is what makes it safe for
  * docker-entrypoint.sh to run it right after the backfill on every boot.
- *
- * Run with: npx tsx migrations/drop_filament_type_columns.ts
  */
-export async function runMigration() {
+export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: drop redundant filament type columns...");
 
   const { rows: legacyMaterialColumn } = await db.execute(sql`
@@ -26,10 +24,10 @@ export async function runMigration() {
     return;
   }
 
-  const { rows: unlinkedRows } = await db.execute<{ count: number }>(sql`
+  const { rows: unlinkedRows } = await db.execute(sql`
     SELECT COUNT(*)::int AS count FROM filaments WHERE filament_type_id IS NULL;
   `);
-  const unlinkedCount = unlinkedRows[0]?.count ?? 0;
+  const unlinkedCount = Number(unlinkedRows[0]?.count ?? 0);
 
   if (unlinkedCount > 0) {
     console.warn(
@@ -65,10 +63,3 @@ export async function runMigration() {
 
   console.log("Migration completed successfully!");
 }
-
-runMigration()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error("Migration failed:", error);
-    process.exit(1);
-  });

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db } from "../server/db";
+import type { LegacyDatabase } from "./types";
 import { createIndexIfMissing } from "./helpers";
 
 /**
@@ -7,9 +7,8 @@ import { createIndexIfMissing } from "./helpers";
  * cached copy of SpoolmanDB's (MIT-licensed) filament profile dataset. Empty
  * until an admin runs "Refresh community database" - see
  * server/utils/spoolmandb-sync.ts.
- * Run with: npx tsx migrations/add_community_filament_cache.ts
  */
-export async function runMigration() {
+export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: community filament cache...");
 
   await db.execute(sql`
@@ -29,8 +28,7 @@ export async function runMigration() {
   `);
   console.log("✓ Created community_filament_cache table");
 
-  await createIndexIfMissing(
-    "community_filament_cache_search_idx",
+  await createIndexIfMissing(db, "community_filament_cache_search_idx",
     sql`
       CREATE INDEX community_filament_cache_search_idx
         ON community_filament_cache (manufacturer, name, color_name);
@@ -40,10 +38,3 @@ export async function runMigration() {
 
   console.log("Migration completed successfully!");
 }
-
-runMigration()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error("Migration failed:", error);
-    process.exit(1);
-  });

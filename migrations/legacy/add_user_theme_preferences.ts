@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db } from "../server/db";
+import type { LegacyDatabase } from "./types";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -12,10 +12,8 @@ import * as path from "path";
  * Existing installs get their previous global theme.json values backfilled
  * onto every user, so nobody's current look changes; new users get the
  * column defaults (matching theme.json's own factory defaults).
- *
- * Run with: npx tsx migrations/add_user_theme_preferences.ts
  */
-export async function runMigration() {
+export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: per-user theme preferences...");
 
   // This migration re-runs on every container start (docker-entrypoint.sh),
@@ -67,10 +65,3 @@ export async function runMigration() {
 
   console.log("Migration completed successfully!");
 }
-
-runMigration()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error("Migration failed:", error);
-    process.exit(1);
-  });

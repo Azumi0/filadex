@@ -1,13 +1,12 @@
 import { sql } from "drizzle-orm";
-import { db } from "../server/db";
+import type { LegacyDatabase } from "./types";
 
 /**
  * Migration: adds the api_tokens table backing per-user API tokens for
  * printer/print-server integrations (Phase A of the printer integration -
  * see IMPLEMENTATION_PLAN.md #5).
- * Run with: npx tsx migrations/add_api_tokens.ts
  */
-export async function runMigration() {
+export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: API tokens...");
 
   await db.execute(sql`
@@ -24,10 +23,3 @@ export async function runMigration() {
 
   console.log("Migration completed successfully!");
 }
-
-runMigration()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error("Migration failed:", error);
-    process.exit(1);
-  });

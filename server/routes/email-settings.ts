@@ -1,8 +1,7 @@
 import type { Express } from "express";
-import { eq } from "drizzle-orm";
-import { db } from "../db";
-import { emailSettings, updateEmailSettingsSchema } from "../../shared/schema";
+import { updateEmailSettingsSchema } from "../../shared/schema";
 import { authenticate, isAdmin } from "../auth";
+import { storage } from "../storage";
 import { sendMail, getEmailSettings } from "../utils/mailer";
 import { logger as appLogger } from "../utils/logger";
 import { ZodError } from "zod";
@@ -29,11 +28,10 @@ export function registerEmailSettingsRoutes(app: Express): void {
     try {
       const validated = updateEmailSettingsSchema.partial().parse(req.body);
 
-      const [updated] = await db
-        .update(emailSettings)
-        .set({ ...validated, updatedAt: new Date() })
-        .where(eq(emailSettings.id, 1))
-        .returning();
+      const updated = await storage.updateEmailSettings(validated);
+      if (!updated) {
+        throw new Error("Email settings row is missing; it is created by a migration");
+      }
 
       const { smtpPassword, ...safeSettings } = updated;
       res.json({ ...safeSettings, hasPassword: !!smtpPassword });

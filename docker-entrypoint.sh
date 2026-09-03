@@ -46,144 +46,30 @@ else
   echo "Database $PGDATABASE already exists."
 fi
 
-# Create the schema directly - with additional verification
-echo "Creating database schema directly with SQL..."
-
-# Check if we are using the correct database
+# Report what we are connected as before touching anything - this image has a
+# history of ownership and permission problems (see the "owner-tolerant"
+# migration work), and knowing this up front makes those failures readable.
 CURRENT_DB=$(PGPASSWORD=$PGPASSWORD psql -h $PGHOST -p $PGPORT -U $PGUSER -tAc "SELECT current_database()" $PGDATABASE)
-echo "Current database: $CURRENT_DB, Target database: $PGDATABASE"
-
-# Check permissions
-echo "Checking database permissions..."
 HAS_PERMISSION=$(PGPASSWORD=$PGPASSWORD psql -h $PGHOST -p $PGPORT -U $PGUSER -tAc "SELECT has_schema_privilege(current_user, 'public', 'CREATE')" $PGDATABASE)
-echo "User has CREATE permission: $HAS_PERMISSION"
+echo "Connected to database: $CURRENT_DB (target: $PGDATABASE), CREATE on public: $HAS_PERMISSION"
 
-# Create tables with explicit schema
-PGPASSWORD=$PGPASSWORD psql -h $PGHOST -p $PGPORT -U $PGUSER -d "$PGDATABASE" -v ON_ERROR_STOP=0 -c "
-  CREATE SCHEMA IF NOT EXISTS public;
-
-  -- Only create tables if they don't exist
-  -- DO NOT execute DROP commands to preserve data
-
-  -- Create tables
-
-  CREATE TABLE IF NOT EXISTS public.users (
-    id SERIAL PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE,
-    password TEXT NOT NULL,
-    is_admin BOOLEAN DEFAULT FALSE,
-    force_change_password BOOLEAN DEFAULT TRUE,
-    language TEXT DEFAULT 'en',
-    currency TEXT DEFAULT 'EUR',
-    temperature_unit TEXT DEFAULT 'C',
-    last_login TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
-  );
-
-
-
-  CREATE TABLE IF NOT EXISTS public.manufacturers (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    sort_order INTEGER DEFAULT 999,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS public.materials (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    sort_order INTEGER DEFAULT 999,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS public.colors (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL,
-    code TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS public.diameters (
-    id SERIAL PRIMARY KEY,
-    value NUMERIC NOT NULL UNIQUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS public.storage_locations (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    sort_order INTEGER DEFAULT 999,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS public.filaments (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL,
-    manufacturer TEXT,
-    material TEXT NOT NULL,
-    color_name TEXT,
-    color_code TEXT,
-    diameter NUMERIC,
-    print_temp TEXT,
-    total_weight NUMERIC NOT NULL,
-    remaining_percentage NUMERIC NOT NULL,
-    purchase_date DATE,
-    purchase_price NUMERIC,
-    status TEXT,
-    spool_type TEXT,
-    dryer_count INTEGER DEFAULT 0 NOT NULL,
-    last_drying_date DATE,
-    storage_location TEXT,
-    user_id INTEGER REFERENCES public.users(id) ON DELETE CASCADE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-  );
-
-  CREATE TABLE IF NOT EXISTS public.user_sharing (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-    material_id INTEGER REFERENCES public.materials(id) ON DELETE CASCADE,
-    is_public BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
-  );
-"
-
-# Check if the tables were created
-for TABLE in users manufacturers materials colors diameters storage_locations filaments user_sharing; do
-  EXISTS=$(PGPASSWORD=$PGPASSWORD psql -h $PGHOST -p $PGPORT -U $PGUSER -d "$PGDATABASE" -tAc "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '$TABLE')")
-  echo "Table $TABLE created: $EXISTS"
-done
-
-echo "Database schema created!"
-
-# Add language column if it doesn't exist
-LANGUAGE_COLUMN_EXISTS=$(PGPASSWORD=$PGPASSWORD psql -h $PGHOST -p $PGPORT -U $PGUSER -d "$PGDATABASE" -tAc "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'language')")
-if [ "$LANGUAGE_COLUMN_EXISTS" = "f" ]; then
-  echo "Adding language column to users table..."
-  PGPASSWORD=$PGPASSWORD psql -h $PGHOST -p $PGPORT -U $PGUSER -d "$PGDATABASE" -v ON_ERROR_STOP=0 -c "ALTER TABLE public.users ADD COLUMN language TEXT DEFAULT 'en';"
-  echo "Language column added."
-else
-  echo "Language column already exists."
-fi
-
-# Add currency column if it doesn't exist
-CURRENCY_COLUMN_EXISTS=$(PGPASSWORD=$PGPASSWORD psql -h $PGHOST -p $PGPORT -U $PGUSER -d "$PGDATABASE" -tAc "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'currency')")
-if [ "$CURRENCY_COLUMN_EXISTS" = "f" ]; then
-  echo "Adding currency column to users table..."
-  PGPASSWORD=$PGPASSWORD psql -h $PGHOST -p $PGPORT -U $PGUSER -d "$PGDATABASE" -v ON_ERROR_STOP=0 -c "ALTER TABLE public.users ADD COLUMN currency TEXT DEFAULT 'EUR';"
-  echo "Currency column added."
-else
-  echo "Currency column already exists."
-fi
-
-# Add temperature_unit column if it doesn't exist
-TEMPERATURE_COLUMN_EXISTS=$(PGPASSWORD=$PGPASSWORD psql -h $PGHOST -p $PGPORT -U $PGUSER -d "$PGDATABASE" -tAc "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'temperature_unit')")
-if [ "$TEMPERATURE_COLUMN_EXISTS" = "f" ]; then
-  echo "Adding temperature_unit column to users table..."
-  PGPASSWORD=$PGPASSWORD psql -h $PGHOST -p $PGPORT -U $PGUSER -d "$PGDATABASE" -v ON_ERROR_STOP=0 -c "ALTER TABLE public.users ADD COLUMN temperature_unit TEXT DEFAULT 'C';"
-  echo "Temperature unit column added."
-else
-  echo "Temperature unit column already exists."
+# Bring the schema up to date.
+#
+# This replaces the CREATE TABLE block and the chain of individual migration
+# scripts that used to live here. scripts/migrate.ts decides what a database
+# needs: a fresh one gets the schema from the generated migrations, an existing
+# one is caught up on the old scripts once and then recorded as being at the
+# migration baseline, and after that only new migrations run.
+#
+# Not allowed to fail silently: a non-zero exit aborts startup rather than
+# leaving the app running against a partially-migrated database (see GH issue
+# #5 - a missing tsconfig.json in this image used to make migrations fail with
+# ERR_MODULE_NOT_FOUND, silently, because of an `|| echo ... continuing`
+# fallback that used to be here).
+echo "Applying database migrations..."
+if ! npx tsx scripts/migrate.ts; then
+  echo "Database migration failed" >&2
+  exit 1
 fi
 
 # Insert sample data, but only if explicitly requested via INIT_SAMPLE_DATA environment variable
@@ -233,61 +119,6 @@ else
     touch "$LOCK_FILE"
   fi
 fi
-
-# Migrations below are NOT allowed to fail silently: any of these exiting
-# non-zero aborts startup instead of leaving the app running against a
-# partially-migrated DB (see GH issue #5 - a missing tsconfig.json in this
-# image used to make every one of these fail with ERR_MODULE_NOT_FOUND,
-# silently, because of an old `|| echo ... continuing` fallback that was
-# here previously).
-run_migration() {
-  echo "Running migration: $1"
-  shift
-
-  if ! npx tsx "$@"; then
-    echo "Migration failed: $*" >&2
-    exit 1
-  fi
-}
-
-# Run the migration to add user_id column
-run_migration "add user_id column to filaments table" run-migration.ts
-
-# Run the migration adding email/RBAC/catalog-request support
-run_migration "add email, roles, and catalog request tables" migrations/add_email_rbac_and_settings.ts
-
-# Run the migration adding the filament usage log table
-run_migration "add filament usage log table" migrations/add_filament_usage_log.ts
-
-# Run the migration adding density to materials
-run_migration "add material density column" migrations/add_material_density.ts
-
-# Run the migration adding notification preferences
-run_migration "add notification preference columns" migrations/add_notification_preferences.ts
-
-# Run the migration adding custom fields
-run_migration "add custom field definitions" migrations/add_custom_fields.ts
-
-# Run the migration adding the community filament cache table
-run_migration "add community filament cache table" migrations/add_community_filament_cache.ts
-
-# Run the migration adding API tokens for printer integrations
-run_migration "add API tokens table" migrations/add_api_tokens.ts
-
-# Run the migration adding filament_types (splits filament product identity
-# out of the flat filaments row into its own table - see IMPLEMENTATION_PLAN.md #9)
-run_migration "add filament types table" migrations/add_filament_types.ts
-
-# Run the migration dropping the now-redundant manufacturer/material/
-# color_name/color_code/diameter/print_temp columns from `filaments` (they
-# live on filament_types now). Safety-gated: it aborts without dropping
-# anything if any filament row still lacks a filament_type_id, so it's safe
-# to run unconditionally right after the backfill above.
-run_migration "drop redundant filament type columns" migrations/drop_filament_type_columns.ts
-
-# Run the migration moving the UI theme from a single global theme.json file
-# to per-user columns (backfills every user from theme.json if present)
-run_migration "add per-user theme preferences" migrations/add_user_theme_preferences.ts
 
 # Start the application
 echo "Starting application..."

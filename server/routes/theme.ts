@@ -1,8 +1,7 @@
 import type { Express } from "express";
-import { eq } from "drizzle-orm";
-import { db } from "../db";
-import { users, updateThemeSchema } from "@shared/schema";
+import { updateThemeSchema } from "@shared/schema";
 import { authenticate } from "../auth";
+import { storage } from "../storage";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { logger as appLogger } from "../utils/logger";
@@ -15,18 +14,13 @@ import { logger as appLogger } from "../utils/logger";
 export function registerThemeRoutes(app: Express): void {
   app.get("/api/theme", authenticate, async (req, res) => {
     try {
-      const [user] = await db.select({
-        variant: users.themeVariant,
-        primary: users.themePrimary,
-        appearance: users.themeAppearance,
-        radius: users.themeRadius,
-      }).from(users).where(eq(users.id, req.userId));
+      const theme = await storage.getUserTheme(req.userId);
 
-      if (!user) {
+      if (!theme) {
         return res.status(404).json({ message: "User not found" });
       }
 
-      res.json(user);
+      res.json(theme);
     } catch (error) {
       appLogger.error("Error fetching theme:", error);
       res.status(500).json({ message: "Failed to read theme" });
@@ -36,15 +30,11 @@ export function registerThemeRoutes(app: Express): void {
   app.post("/api/theme", authenticate, async (req, res) => {
     try {
       const data = updateThemeSchema.parse(req.body);
-      const updateData: Record<string, unknown> = {};
-      if (data.variant !== undefined) updateData.themeVariant = data.variant;
-      if (data.primary !== undefined) updateData.themePrimary = data.primary;
-      if (data.appearance !== undefined) updateData.themeAppearance = data.appearance;
-      if (data.radius !== undefined) updateData.themeRadius = data.radius.toString();
 
-      if (Object.keys(updateData).length > 0) {
-        await db.update(users).set(updateData).where(eq(users.id, req.userId));
-      }
+      await storage.updateUserTheme(req.userId, {
+        ...data,
+        radius: data.radius?.toString(),
+      });
 
       res.json({ message: "Theme updated successfully" });
     } catch (error) {

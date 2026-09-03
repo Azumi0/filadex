@@ -1,0 +1,11 @@
+-- The email settings are one row with a fixed id. PUT /api/settings/email
+-- updates it and has nothing to create it with, so the row has to exist before
+-- an admin ever opens that page.
+--
+-- docker-entrypoint.sh used to re-run the whole legacy chain on every start,
+-- and migrations/legacy/add_email_rbac_and_settings.ts inserted it there. Now
+-- that a fresh database is built from 0000 alone - which creates the table but
+-- no row - it has to come from here, or a new installation can never save its
+-- SMTP settings. On an upgraded database the legacy chain has already inserted
+-- it and this does nothing.
+INSERT INTO "email_settings" ("id") VALUES (1) ON CONFLICT ("id") DO NOTHING;

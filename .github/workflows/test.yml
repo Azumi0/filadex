@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 22, not 20: testcontainers 12 declares `engines: node >= 22.22` and
+          # bundles undici 8, which does `require('node:worker_threads')
+          # .markAsUncloneable` at import. That export does not exist on Node 20,
+          # so both jobs died loading the test harness, before any test ran.
+          # The application itself is unaffected - testcontainers is a
+          # devDependency and the image still builds on node:20-alpine.
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+  # Proves that a database created by an older Filadex still upgrades cleanly:
+  # every row preserved, the same schema a fresh install gets, and every spool
+  # carried across the filament_types backfill with its product identity intact.
+  # This is what keeps migrations/legacy honest - those scripts are frozen and
+  # are otherwise only exercised on a real upgrade, where finding out they broke
+  # is too late.
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 22, not 20: testcontainers 12 declares `engines: node >= 22.22` and
+          # bundles undici 8, which does `require('node:worker_threads')
+          # .markAsUncloneable` at import. That export does not exist on Node 20,
+          # so both jobs died loading the test harness, before any test ran.
+          # The application itself is unaffected - testcontainers is a
+          # devDependency and the image still builds on node:20-alpine.
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run db:verify-upgrade

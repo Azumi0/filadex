@@ -10,10 +10,129 @@ import {
   customFieldDefinitions, type CustomFieldDefinition, type InsertCustomFieldDefinition,
   apiTokens, type ApiToken
 } from "@shared/schema";
-import { users, type User, type InsertUser } from "@shared/schema";
+import {
+  users, type User,
+  userSharing, type UserSharing,
+  catalogRequests, type CatalogRequest,
+  communityFilamentCache, type CommunityFilamentCacheEntry,
+  emailSettings, type EmailSettings,
+} from "@shared/schema";
 import { db } from "./db";
-import { eq, sql, and, inArray, desc, isNull } from "drizzle-orm";
+import { eq, sql, and, or, inArray, desc, isNull, count } from "drizzle-orm";
 import { logger } from "./utils/logger";
+import { containsIgnoreCase, eqIgnoreCase } from "./db/predicates";
+
+/** What the authentication middleware needs to authorize a request. */
+export type AuthContext = {
+  id: number;
+  username: string;
+  isAdmin: boolean | null;
+  role: string;
+};
+
+/**
+ * A new account. Wider than InsertUser: self-registration and the default-admin
+ * bootstrap both need to set the fields that decide whether the account can log
+ * in at all (role, emailVerified, the verification token).
+ */
+export type NewUser = {
+  username: string;
+  password: string;
+  email?: string | null;
+  role: string;
+  isAdmin: boolean;
+  emailVerified: boolean;
+  forceChangePassword: boolean;
+  emailVerificationToken?: string | null;
+  emailVerificationExpires?: Date | null;
+};
+
+/** The columns the admin user list exposes - notably not the password hash. */
+export type AdminUserListEntry = {
+  id: number;
+  username: string;
+  isAdmin: boolean | null;
+  role: string;
+  email: string | null;
+  emailVerified: boolean | null;
+  forceChangePassword: boolean | null;
+  language: string | null;
+  currency: string | null;
+  temperatureUnit: string | null;
+  createdAt: Date | null;
+  lastLogin: Date | null;
+};
+
+/** What an administrator is allowed to change about another account. */
+export type UserChanges = {
+  username?: string;
+  password?: string;
+  isAdmin?: boolean;
+  role?: string;
+  forceChangePassword?: boolean;
+};
+
+export type EmailSettingsChanges = Partial<Omit<typeof emailSettings.$inferInsert, "id" | "updatedAt">>;
+
+export type NewCommunityFilament = typeof communityFilamentCache.$inferInsert;
+
+export type CommunityFilamentCacheStatus = {
+  count: number;
+  lastUpdated: string | null;
+};
+
+/** A queued catalog request as an admin sees it: named requester, no user id. */
+export type CatalogRequestForReview = {
+  id: number;
+  entityType: string;
+  payload: unknown;
+  status: string;
+  reviewNote: string | null;
+  reviewedAt: Date | null;
+  createdAt: Date | null;
+  requestedBy: string | null;
+};
+
+export type CatalogRequestReview = {
+  status: "approved" | "rejected";
+  reviewedBy: number;
+  reviewNote?: string | null;
+};
+
+/**
+ * A user's theme. `radius` is a numeric column, so it is carried as a string
+ * both ways - the same contract the rest of the app's numerics use.
+ */
+export type UserTheme = {
+  variant: string | null;
+  primary: string | null;
+  appearance: string | null;
+  radius: string | null;
+};
+
+export type ThemeChanges = {
+  variant?: string;
+  primary?: string;
+  appearance?: string;
+  radius?: string;
+};
+
+/** The outcome of upsertUserSharing - `created` decides 201 versus 200. */
+export type UpsertedSharing = {
+  sharing: UserSharing;
+  created: boolean;
+};
+
+/** Per-user settings a user changes about themselves. */
+export type UserPreferences = {
+  language?: string;
+  currency?: string;
+  temperatureUnit?: string;
+  lowStockThresholdPercent?: number;
+  notifyLowStock?: boolean;
+  notifyDryingReminder?: boolean;
+  dryingReminderDays?: number;
+};
 
 export interface InsertFilamentUsageLog {
   filamentId: number;
@@ -100,11 +219,77 @@ const FILAMENT_SELECT_COLUMNS = {
 // you might need
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
+  /** Looks a user up by name the way the account namespace is defined: ignoring case. */
   getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  /** Just the fields the authentication middleware puts on the request. */
+  getUserAuthContext(id: number): Promise<AuthContext | undefined>;
+  createUser(user: NewUser): Promise<User>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByEmailVerificationToken(token: string): Promise<User | undefined>;
+  getUserByPasswordResetToken(token: string): Promise<User | undefined>;
+  /** Marks the address confirmed and spends the token that confirmed it. */
+  markEmailVerified(userId: number): Promise<void>;
+  setEmailVerificationToken(userId: number, token: string, expiresAt: Date): Promise<void>;
+  setPasswordResetToken(userId: number, token: string, expiresAt: Date): Promise<void>;
+  /** Completes a reset: sets the password and spends the reset token. */
+  resetPassword(userId: number, hashedPassword: string): Promise<void>;
+  /** Changes the password of a user who is already signed in. */
+  changePassword(userId: number, hashedPassword: string): Promise<void>;
+  recordLogin(userId: number): Promise<void>;
+
+  // User administration
+  listUsers(): Promise<AdminUserListEntry[]>;
+  updateUser(id: number, changes: UserChanges): Promise<User | undefined>;
+  deleteUser(id: number): Promise<void>;
+  /** How many accounts can still administer the installation. */
+  countAdmins(): Promise<number>;
+  /** Writes whichever preferences were supplied; no-ops when none were. */
+  updateUserPreferences(userId: number, preferences: UserPreferences): Promise<void>;
+  getUserTheme(userId: number): Promise<UserTheme | undefined>;
+  /** Writes whichever parts of the theme were supplied; no-ops when none were. */
+  updateUserTheme(userId: number, theme: ThemeChanges): Promise<void>;
+
+  // Scheduled notification checks
+  /** Everyone who could receive a notification email. */
+  getVerifiedUsers(): Promise<User[]>;
+  /** Names of the catalog materials that absorb moisture, for drying reminders. */
+  getHygroscopicMaterialNames(): Promise<string[]>;
+  markLowStockNotified(filamentIds: number[]): Promise<void>;
+  markDryingReminderNotified(filamentIds: number[]): Promise<void>;
+
+  // Catalog requests
+  createCatalogRequest(userId: number, entityType: string, payload: unknown): Promise<CatalogRequest>;
+  /** The review queue, newest first, with the requester's name resolved. */
+  listCatalogRequests(status?: string): Promise<CatalogRequestForReview[]>;
+  getCatalogRequestsByUser(userId: number): Promise<CatalogRequest[]>;
+  /** Only returns a request still awaiting review, so a second review cannot land. */
+  getPendingCatalogRequest(id: number): Promise<CatalogRequest | undefined>;
+  reviewCatalogRequest(id: number, review: CatalogRequestReview): Promise<CatalogRequest | undefined>;
+
+  // Community filament cache (mirrored from SpoolmanDB)
+  /** Case-insensitive substring match over manufacturer, product name and colour. */
+  searchCommunityFilaments(query: string, limit: number): Promise<CommunityFilamentCacheEntry[]>;
+  /** Swaps the whole cache for a fresh set, atomically. */
+  replaceCommunityFilaments(entries: NewCommunityFilament[]): Promise<void>;
+  getCommunityFilamentCacheStatus(): Promise<CommunityFilamentCacheStatus>;
+
+  // Email settings (a single row)
+  getEmailSettings(): Promise<EmailSettings | undefined>;
+  /** Writes the settings row a migration seeds; undefined if it is not there. */
+  updateEmailSettings(changes: EmailSettingsChanges): Promise<EmailSettings | undefined>;
+
+  // Sharing settings
+  getUserSharing(userId: number): Promise<UserSharing[]>;
+  /** Replaces this user's setting for a material - or their global one, when materialId is null. */
+  setUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UserSharing>;
+  /** Only the settings that actually share something. */
+  getPublicUserSharing(userId: number): Promise<UserSharing[]>;
+  /** Updates this user's setting for a material in place, or creates it. */
+  upsertUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UpsertedSharing>;
 
   // Filament operations
   getFilaments(userId: number): Promise<Filament[]>;
+  /** UNUSED - see the note on the implementation, and TODO.md. */
   getPublicFilamentsWithUser(userId: number, filterFn?: (filament: Filament) => boolean): Promise<{filaments: Filament[], user: {id: number, username: string}}>;
   getFilament(id: number, userId: number): Promise<Filament | undefined>;
   createFilament(filament: InsertFilament): Promise<Filament>;
@@ -139,6 +324,7 @@ export interface IStorage {
 
   // Material operations
   getMaterials(): Promise<Material[]>;
+  getMaterialsByIds(ids: number[]): Promise<Material[]>;
   createMaterial(material: InsertMaterial): Promise<Material>;
   deleteMaterial(id: number): Promise<boolean>;
   updateMaterialOrder(id: number, newOrder: number): Promise<Material | undefined>;
@@ -168,16 +354,326 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
+    const [user] = await db.select().from(users)
+      .where(eqIgnoreCase(users.username, username));
     return user || undefined;
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async getUserAuthContext(id: number): Promise<AuthContext | undefined> {
+    const [user] = await db.select({
+      id: users.id,
+      username: users.username,
+      isAdmin: users.isAdmin,
+      role: users.role,
+    }).from(users).where(eq(users.id, id));
+    return user || undefined;
+  }
+
+  async createUser(newUser: NewUser): Promise<User> {
     const [user] = await db
       .insert(users)
-      .values(insertUser)
+      .values(newUser)
       .returning();
     return user;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users)
+      .where(eqIgnoreCase(users.email, email));
+    return user || undefined;
+  }
+
+  async getUserByEmailVerificationToken(token: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users)
+      .where(eq(users.emailVerificationToken, token));
+    return user || undefined;
+  }
+
+  async getUserByPasswordResetToken(token: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users)
+      .where(eq(users.passwordResetToken, token));
+    return user || undefined;
+  }
+
+  async markEmailVerified(userId: number): Promise<void> {
+    await db.update(users)
+      .set({ emailVerified: true, emailVerificationToken: null, emailVerificationExpires: null })
+      .where(eq(users.id, userId));
+  }
+
+  async setEmailVerificationToken(userId: number, token: string, expiresAt: Date): Promise<void> {
+    await db.update(users)
+      .set({ emailVerificationToken: token, emailVerificationExpires: expiresAt })
+      .where(eq(users.id, userId));
+  }
+
+  async setPasswordResetToken(userId: number, token: string, expiresAt: Date): Promise<void> {
+    await db.update(users)
+      .set({ passwordResetToken: token, passwordResetExpires: expiresAt })
+      .where(eq(users.id, userId));
+  }
+
+  async resetPassword(userId: number, hashedPassword: string): Promise<void> {
+    await db.update(users)
+      .set({
+        password: hashedPassword,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+        forceChangePassword: false,
+      })
+      .where(eq(users.id, userId));
+  }
+
+  // Unlike resetPassword this leaves any pending reset token alone, which is
+  // the behaviour the change-password endpoint has always had.
+  async changePassword(userId: number, hashedPassword: string): Promise<void> {
+    await db.update(users)
+      .set({ password: hashedPassword, forceChangePassword: false })
+      .where(eq(users.id, userId));
+  }
+
+  async recordLogin(userId: number): Promise<void> {
+    await db.update(users).set({ lastLogin: new Date() }).where(eq(users.id, userId));
+  }
+
+  async listUsers(): Promise<AdminUserListEntry[]> {
+    return await db.select({
+      id: users.id,
+      username: users.username,
+      isAdmin: users.isAdmin,
+      role: users.role,
+      email: users.email,
+      emailVerified: users.emailVerified,
+      forceChangePassword: users.forceChangePassword,
+      language: users.language,
+      currency: users.currency,
+      temperatureUnit: users.temperatureUnit,
+      createdAt: users.createdAt,
+      lastLogin: users.lastLogin,
+    }).from(users);
+  }
+
+  async updateUser(id: number, changes: UserChanges): Promise<User | undefined> {
+    if (Object.keys(changes).length === 0) {
+      return await this.getUser(id);
+    }
+
+    const [updated] = await db.update(users).set(changes).where(eq(users.id, id)).returning();
+    return updated || undefined;
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    await db.delete(users).where(eq(users.id, id));
+  }
+
+  async countAdmins(): Promise<number> {
+    const [{ count: admins }] = await db.select({ count: count() }).from(users)
+      .where(eq(users.role, "admin"));
+    return admins;
+  }
+
+  async updateUserPreferences(userId: number, preferences: UserPreferences): Promise<void> {
+    if (Object.keys(preferences).length === 0) {
+      return;
+    }
+
+    await db.update(users).set(preferences).where(eq(users.id, userId));
+  }
+
+  async getVerifiedUsers(): Promise<User[]> {
+    return await db.select().from(users).where(eq(users.emailVerified, true));
+  }
+
+  async getHygroscopicMaterialNames(): Promise<string[]> {
+    const rows = await db.select({ name: materials.name }).from(materials)
+      .where(eq(materials.isHygroscopic, true));
+    return rows.map((row) => row.name);
+  }
+
+  async markLowStockNotified(filamentIds: number[]): Promise<void> {
+    if (filamentIds.length === 0) return;
+    await db.update(filaments)
+      .set({ lowStockNotifiedAt: new Date() })
+      .where(inArray(filaments.id, filamentIds));
+  }
+
+  async markDryingReminderNotified(filamentIds: number[]): Promise<void> {
+    if (filamentIds.length === 0) return;
+    await db.update(filaments)
+      .set({ dryingReminderNotifiedAt: new Date() })
+      .where(inArray(filaments.id, filamentIds));
+  }
+
+  async createCatalogRequest(userId: number, entityType: string, payload: unknown): Promise<CatalogRequest> {
+    const [created] = await db.insert(catalogRequests)
+      .values({ userId, entityType, payload })
+      .returning();
+    return created;
+  }
+
+  async listCatalogRequests(status?: string): Promise<CatalogRequestForReview[]> {
+    return await db
+      .select({
+        id: catalogRequests.id,
+        entityType: catalogRequests.entityType,
+        payload: catalogRequests.payload,
+        status: catalogRequests.status,
+        reviewNote: catalogRequests.reviewNote,
+        reviewedAt: catalogRequests.reviewedAt,
+        createdAt: catalogRequests.createdAt,
+        requestedBy: users.username,
+      })
+      .from(catalogRequests)
+      .leftJoin(users, eq(catalogRequests.userId, users.id))
+      .where(status ? eq(catalogRequests.status, status) : undefined)
+      .orderBy(desc(catalogRequests.createdAt));
+  }
+
+  async getCatalogRequestsByUser(userId: number): Promise<CatalogRequest[]> {
+    return await db.select().from(catalogRequests)
+      .where(eq(catalogRequests.userId, userId))
+      .orderBy(desc(catalogRequests.createdAt));
+  }
+
+  async getPendingCatalogRequest(id: number): Promise<CatalogRequest | undefined> {
+    const [request] = await db.select().from(catalogRequests)
+      .where(and(eq(catalogRequests.id, id), eq(catalogRequests.status, "pending")));
+    return request || undefined;
+  }
+
+  async reviewCatalogRequest(id: number, review: CatalogRequestReview): Promise<CatalogRequest | undefined> {
+    const [updated] = await db.update(catalogRequests)
+      .set({ ...review, reviewedAt: new Date() })
+      .where(eq(catalogRequests.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async searchCommunityFilaments(query: string, limit: number): Promise<CommunityFilamentCacheEntry[]> {
+    return await db.select().from(communityFilamentCache)
+      .where(or(
+        containsIgnoreCase(communityFilamentCache.manufacturer, query),
+        containsIgnoreCase(communityFilamentCache.name, query),
+        containsIgnoreCase(communityFilamentCache.colorName, query),
+      ))
+      .limit(limit);
+  }
+
+  async replaceCommunityFilaments(entries: NewCommunityFilament[]): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`TRUNCATE TABLE community_filament_cache`);
+      if (entries.length > 0) {
+        // Insert in chunks to stay well under typical parameter-count limits
+        const CHUNK_SIZE = 500;
+        for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+          await tx.insert(communityFilamentCache).values(entries.slice(i, i + CHUNK_SIZE));
+        }
+      }
+    });
+  }
+
+  async getCommunityFilamentCacheStatus(): Promise<CommunityFilamentCacheStatus> {
+    const [row] = await db.select({
+      count: sql<number>`count(*)`,
+      lastUpdated: sql<string | null>`max(${communityFilamentCache.updatedAt})`,
+    }).from(communityFilamentCache);
+    return { count: Number(row?.count ?? 0), lastUpdated: row?.lastUpdated ?? null };
+  }
+
+  async getEmailSettings(): Promise<EmailSettings | undefined> {
+    const [settings] = await db.select().from(emailSettings).where(eq(emailSettings.id, 1));
+    return settings || undefined;
+  }
+
+  async updateEmailSettings(changes: EmailSettingsChanges): Promise<EmailSettings | undefined> {
+    const [updated] = await db.update(emailSettings)
+      .set({ ...changes, updatedAt: new Date() })
+      .where(eq(emailSettings.id, 1))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getUserTheme(userId: number): Promise<UserTheme | undefined> {
+    const [theme] = await db.select({
+      variant: users.themeVariant,
+      primary: users.themePrimary,
+      appearance: users.themeAppearance,
+      radius: users.themeRadius,
+    }).from(users).where(eq(users.id, userId));
+    return theme || undefined;
+  }
+
+  async updateUserTheme(userId: number, theme: ThemeChanges): Promise<void> {
+    const columns: Partial<typeof users.$inferInsert> = {};
+    if (theme.variant !== undefined) columns.themeVariant = theme.variant;
+    if (theme.primary !== undefined) columns.themePrimary = theme.primary;
+    if (theme.appearance !== undefined) columns.themeAppearance = theme.appearance;
+    if (theme.radius !== undefined) columns.themeRadius = theme.radius;
+
+    if (Object.keys(columns).length === 0) {
+      return;
+    }
+
+    await db.update(users).set(columns).where(eq(users.id, userId));
+  }
+
+  async getUserSharing(userId: number): Promise<UserSharing[]> {
+    return await db.select().from(userSharing).where(eq(userSharing.userId, userId));
+  }
+
+  async setUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UserSharing> {
+    // A global setting has a NULL material_id, and `material_id = NULL` is never
+    // true, so clearing it needs IS NULL.
+    await db.delete(userSharing).where(and(
+      eq(userSharing.userId, userId),
+      materialId === null ? isNull(userSharing.materialId) : eq(userSharing.materialId, materialId),
+    ));
+
+    const [created] = await db.insert(userSharing)
+      .values({ userId, materialId, isPublic })
+      .returning();
+    return created;
+  }
+
+  async getPublicUserSharing(userId: number): Promise<UserSharing[]> {
+    return await db.select().from(userSharing)
+      .where(and(eq(userSharing.userId, userId), eq(userSharing.isPublic, true)));
+  }
+
+  async upsertUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UpsertedSharing> {
+    // A global setting has a NULL material_id, and `material_id = NULL` is never
+    // true, so finding it needs IS NULL.
+    //
+    // There may be more than one row here. Nothing stops it at the schema level,
+    // and every release before the one that fixed it left a duplicate behind on
+    // each toggle. Updating only the row that happened to come back first would
+    // leave the others deciding the answer - getPublicUserSharing takes any row
+    // with is_public, so a stale `true` keeps a collection public after it was
+    // set to private. The oldest row wins and the rest go, which is what makes
+    // this endpoint able to clean up the damage rather than only setUserSharing.
+    const duplicates = await db.select().from(userSharing).where(and(
+      eq(userSharing.userId, userId),
+      materialId === null ? isNull(userSharing.materialId) : eq(userSharing.materialId, materialId),
+    )).orderBy(userSharing.id);
+
+    const [existing, ...extra] = duplicates;
+
+    if (existing) {
+      if (extra.length > 0) {
+        await db.delete(userSharing).where(inArray(userSharing.id, extra.map((row) => row.id)));
+      }
+
+      const [updated] = await db.update(userSharing)
+        .set({ isPublic })
+        .where(eq(userSharing.id, existing.id))
+        .returning();
+      return { sharing: updated, created: false };
+    }
+
+    const [created] = await db.insert(userSharing)
+      .values({ userId, materialId, isPublic })
+      .returning();
+    return { sharing: created, created: true };
   }
 
   // Filament implementations
@@ -187,6 +683,11 @@ export class DatabaseStorage implements IStorage {
       .where(eq(filaments.userId, userId));
   }
 
+  // UNUSED. Nothing calls this. routes/public.ts serves the public collection
+  // by composing getUser + getFilaments instead, because it has to answer 404
+  // for a missing user while this throws. Either give it a shape that route can
+  // use, or delete it - as it stands it will drift from the behaviour it
+  // duplicates. See TODO.md, Technical Debt.
   async getPublicFilamentsWithUser(userId: number, filterFn?: (filament: Filament) => boolean): Promise<{filaments: Filament[], user: {id: number, username: string}}> {
     // Get user information
     const [user] = await db.select({
@@ -426,6 +927,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Material implementations
+  async getMaterialsByIds(ids: number[]): Promise<Material[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    return await db.select().from(materials).where(inArray(materials.id, ids));
+  }
+
   async getMaterials(): Promise<Material[]> {
     return await db.select().from(materials).orderBy(materials.sortOrder, materials.name);
   }
@@ -525,494 +1033,6 @@ export class DatabaseStorage implements IStorage {
       .where(eq(storageLocations.id, id))
       .returning();
     return updated || undefined;
-  }
-}
-
-// Memory Storage implementation for development and testing
-export class MemStorage implements IStorage {
-  private users: Map<number, User>;
-  private filamentStore: Map<number, Filament>;
-  private manufacturerStore: Map<number, Manufacturer>;
-  private materialStore: Map<number, Material>;
-  private colorStore: Map<number, Color>;
-  private diameterStore: Map<number, Diameter>;
-  private storageLocationStore: Map<number, StorageLocation>;
-  private usageLogStore: Map<number, FilamentUsageLog>;
-  private customFieldDefinitionStore: Map<number, CustomFieldDefinition>;
-  private apiTokenStore: Map<number, ApiToken>;
-
-  userCurrentId: number;
-  filamentCurrentId: number;
-  manufacturerCurrentId: number;
-  materialCurrentId: number;
-  colorCurrentId: number;
-  diameterCurrentId: number;
-  storageLocationCurrentId: number;
-  usageLogCurrentId: number;
-  customFieldDefinitionCurrentId: number;
-  apiTokenCurrentId: number;
-
-  constructor() {
-    this.users = new Map();
-    this.filamentStore = new Map();
-    this.manufacturerStore = new Map();
-    this.materialStore = new Map();
-    this.colorStore = new Map();
-    this.diameterStore = new Map();
-    this.storageLocationStore = new Map();
-    this.usageLogStore = new Map();
-    this.customFieldDefinitionStore = new Map();
-    this.apiTokenStore = new Map();
-
-    this.userCurrentId = 1;
-    this.filamentCurrentId = 1;
-    this.manufacturerCurrentId = 1;
-    this.materialCurrentId = 1;
-    this.colorCurrentId = 1;
-    this.diameterCurrentId = 1;
-    this.storageLocationCurrentId = 1;
-    this.usageLogCurrentId = 1;
-    this.customFieldDefinitionCurrentId = 1;
-    this.apiTokenCurrentId = 1;
-
-    // Add some initial data
-    this.createFilament({
-      name: "PLA Schwarz Bambu Lab",
-      manufacturer: "Bambu Lab",
-      material: "PLA",
-      colorName: "Schwarz",
-      colorCode: "#000000",
-      diameter: "1.75",
-      printTemp: "200-220°C",
-      totalWeight: "1",
-      remainingPercentage: "65"
-    });
-
-    this.createFilament({
-      name: "PETG Transparent",
-      manufacturer: "Prusament",
-      material: "PETG",
-      colorName: "Transparent",
-      colorCode: "#FFFFFF",
-      diameter: "1.75",
-      printTemp: "230-250°C",
-      totalWeight: "1",
-      remainingPercentage: "15"
-    });
-
-    this.createFilament({
-      name: "ABS Rot",
-      manufacturer: "Filamentworld",
-      material: "ABS",
-      colorName: "Rot",
-      colorCode: "#F44336",
-      diameter: "1.75",
-      printTemp: "240-260°C",
-      totalWeight: "1",
-      remainingPercentage: "0"
-    });
-
-    this.createFilament({
-      name: "TPU Flexibel Grau",
-      manufacturer: "Ninjatek",
-      material: "TPU",
-      colorName: "Grau",
-      colorCode: "#9E9E9E",
-      diameter: "1.75",
-      printTemp: "210-230°C",
-      totalWeight: "0.5",
-      remainingPercentage: "75"
-    });
-  }
-
-  async getUser(id: number): Promise<User | undefined> {
-    return this.users.get(id);
-  }
-
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = this.userCurrentId++;
-    const user: User = {
-      id,
-      username: insertUser.username,
-      password: insertUser.password,
-      isAdmin: insertUser.isAdmin ?? false,
-      role: "user",
-      email: null,
-      emailVerified: false,
-      emailVerificationToken: null,
-      emailVerificationExpires: null,
-      passwordResetToken: null,
-      passwordResetExpires: null,
-      forceChangePassword: insertUser.forceChangePassword ?? true,
-      language: insertUser.language ?? "en",
-      currency: insertUser.currency ?? "EUR",
-      temperatureUnit: insertUser.temperatureUnit ?? "C",
-      lastLogin: null,
-      createdAt: new Date(),
-      lowStockThresholdPercent: 15,
-      notifyLowStock: true,
-      notifyDryingReminder: true,
-      dryingReminderDays: 30,
-      themeVariant: "professional",
-      themePrimary: "#EA580C",
-      themeAppearance: "dark",
-      themeRadius: "0.8",
-    };
-    this.users.set(id, user);
-    return user;
-  }
-
-  // Filament implementations
-  async getFilaments(userId: number): Promise<Filament[]> {
-    return Array.from(this.filamentStore.values())
-      .filter(filament => filament.userId === userId);
-  }
-
-  async getPublicFilamentsWithUser(userId: number, filterFn?: (filament: Filament) => boolean): Promise<{filaments: Filament[], user: {id: number, username: string}}> {
-    // Get user
-    const user = await this.getUser(userId);
-    if (!user) {
-      throw new Error(`User with ID ${userId} not found`);
-    }
-
-    // Get filaments
-    const allFilaments = await this.getFilaments(userId);
-
-    // Apply filter if provided
-    const filteredFilaments = filterFn ? allFilaments.filter(filterFn) : allFilaments;
-
-    // Return filaments with user information
-    return {
-      filaments: filteredFilaments,
-      user: {
-        id: user.id,
-        username: user.username
-      }
-    };
-  }
-
-  async getFilament(id: number, userId: number): Promise<Filament | undefined> {
-    const filament = this.filamentStore.get(id);
-    if (filament && filament.userId === userId) {
-      return filament;
-    }
-    return undefined;
-  }
-
-  async createFilament(insertFilament: InsertFilament): Promise<Filament> {
-    const id = this.filamentCurrentId++;
-    // MemStorage keeps the flattened shape directly (no separate type-store
-    // normalization needed for this in-memory dev stub); filamentTypeId is a
-    // synthetic id just to satisfy the Filament shape.
-    const filament: Filament = {
-      id,
-      filamentTypeId: id,
-      userId: insertFilament.userId ?? null,
-      name: insertFilament.name,
-      totalWeight: insertFilament.totalWeight,
-      remainingPercentage: insertFilament.remainingPercentage,
-      purchaseDate: insertFilament.purchaseDate ?? null,
-      purchasePrice: insertFilament.purchasePrice ?? null,
-      status: insertFilament.status ?? null,
-      spoolType: insertFilament.spoolType ?? null,
-      dryerCount: insertFilament.dryerCount ?? 0,
-      lastDryingDate: insertFilament.lastDryingDate ?? null,
-      storageLocation: insertFilament.storageLocation ?? null,
-      lowStockNotifiedAt: insertFilament.lowStockNotifiedAt ?? null,
-      dryingReminderNotifiedAt: insertFilament.dryingReminderNotifiedAt ?? null,
-      customFieldValues: insertFilament.customFieldValues ?? {},
-      manufacturer: insertFilament.manufacturer ?? null,
-      material: insertFilament.material,
-      colorName: insertFilament.colorName,
-      colorCode: insertFilament.colorCode ?? null,
-      diameter: insertFilament.diameter ?? null,
-      printTemp: insertFilament.printTemp ?? null,
-    };
-    this.filamentStore.set(id, filament);
-    return filament;
-  }
-
-  async updateFilament(id: number, updateFilament: Partial<InsertFilament>, userId: number): Promise<Filament | undefined> {
-    const existing = this.filamentStore.get(id);
-    if (!existing || existing.userId !== userId) return undefined;
-
-    const updated: Filament = { ...existing, ...updateFilament };
-    this.filamentStore.set(id, updated);
-    return updated;
-  }
-
-  async deleteFilament(id: number, userId: number): Promise<boolean> {
-    const filament = this.filamentStore.get(id);
-    if (filament && filament.userId === userId) {
-      return this.filamentStore.delete(id);
-    }
-    return false;
-  }
-
-  // Batch operations
-  async batchDeleteFilaments(ids: number[], userId: number): Promise<number> {
-    let deletedCount = 0;
-    for (const id of ids) {
-      const filament = this.filamentStore.get(id);
-      if (filament && filament.userId === userId) {
-        this.filamentStore.delete(id);
-        deletedCount++;
-      }
-    }
-    return deletedCount;
-  }
-
-  async batchUpdateFilaments(ids: number[], updates: Partial<InsertFilament>, userId: number): Promise<number> {
-    let updatedCount = 0;
-    for (const id of ids) {
-      const filament = this.filamentStore.get(id);
-      if (filament && filament.userId === userId) {
-        const updated = { ...filament, ...updates };
-        this.filamentStore.set(id, updated);
-        updatedCount++;
-      }
-    }
-    return updatedCount;
-  }
-
-  // Filament usage log implementations
-  async getFilamentUsageLog(filamentId: number, userId: number): Promise<FilamentUsageLog[]> {
-    return Array.from(this.usageLogStore.values())
-      .filter(log => log.filamentId === filamentId && log.userId === userId)
-      .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
-  }
-
-  async createFilamentUsageLog(entry: InsertFilamentUsageLog): Promise<FilamentUsageLog> {
-    const id = this.usageLogCurrentId++;
-    const log: FilamentUsageLog = {
-      id,
-      filamentId: entry.filamentId,
-      userId: entry.userId,
-      deltaWeight: entry.deltaWeight,
-      remainingPercentageAfter: entry.remainingPercentageAfter,
-      note: entry.note ?? null,
-      source: entry.source ?? "manual",
-      createdAt: new Date(),
-    };
-    this.usageLogStore.set(id, log);
-    return log;
-  }
-
-  // Custom field definition implementations
-  async getCustomFieldDefinitions(userId: number): Promise<CustomFieldDefinition[]> {
-    return Array.from(this.customFieldDefinitionStore.values()).filter((d) => d.userId === userId);
-  }
-
-  async createCustomFieldDefinition(userId: number, definition: InsertCustomFieldDefinition): Promise<CustomFieldDefinition> {
-    const id = this.customFieldDefinitionCurrentId++;
-    const created: CustomFieldDefinition = {
-      id,
-      userId,
-      entityType: definition.entityType ?? "filament",
-      name: definition.name,
-      fieldType: definition.fieldType,
-      createdAt: new Date(),
-    };
-    this.customFieldDefinitionStore.set(id, created);
-    return created;
-  }
-
-  async deleteCustomFieldDefinition(id: number, userId: number): Promise<boolean> {
-    const definition = this.customFieldDefinitionStore.get(id);
-    if (definition && definition.userId === userId) {
-      return this.customFieldDefinitionStore.delete(id);
-    }
-    return false;
-  }
-
-  // API token implementations
-  async getApiTokens(userId: number): Promise<ApiToken[]> {
-    return Array.from(this.apiTokenStore.values()).filter((t) => t.userId === userId);
-  }
-
-  async createApiToken(userId: number, tokenHash: string, label: string | undefined): Promise<ApiToken> {
-    const id = this.apiTokenCurrentId++;
-    const token: ApiToken = {
-      id,
-      userId,
-      tokenHash,
-      label: label ?? null,
-      createdAt: new Date(),
-      lastUsedAt: null,
-    };
-    this.apiTokenStore.set(id, token);
-    return token;
-  }
-
-  async deleteApiToken(id: number, userId: number): Promise<boolean> {
-    const token = this.apiTokenStore.get(id);
-    if (token && token.userId === userId) {
-      return this.apiTokenStore.delete(id);
-    }
-    return false;
-  }
-
-  async getUserIdByTokenHash(tokenHash: string): Promise<number | undefined> {
-    const token = Array.from(this.apiTokenStore.values()).find((t) => t.tokenHash === tokenHash);
-    if (token) {
-      await this.touchApiTokenLastUsed(token.id);
-    }
-    return token?.userId;
-  }
-
-  async touchApiTokenLastUsed(id: number): Promise<void> {
-    const token = this.apiTokenStore.get(id);
-    if (token) {
-      this.apiTokenStore.set(id, { ...token, lastUsedAt: new Date() });
-    }
-  }
-
-  // Manufacturer implementations
-  async getManufacturers(): Promise<Manufacturer[]> {
-    return Array.from(this.manufacturerStore.values())
-      .sort((a, b) => {
-        if (a.sortOrder !== null && b.sortOrder !== null) {
-          return a.sortOrder - b.sortOrder;
-        }
-        return a.name.localeCompare(b.name);
-      });
-  }
-
-  async createManufacturer(insertManufacturer: InsertManufacturer): Promise<Manufacturer> {
-    const id = this.manufacturerCurrentId++;
-    const manufacturer: Manufacturer = {
-      ...insertManufacturer,
-      id,
-      createdAt: new Date(),
-      sortOrder: 999 // Default to end of list
-    };
-    this.manufacturerStore.set(id, manufacturer);
-    return manufacturer;
-  }
-
-  async deleteManufacturer(id: number): Promise<boolean> {
-    return this.manufacturerStore.delete(id);
-  }
-
-  async updateManufacturerOrder(id: number, newOrder: number): Promise<Manufacturer | undefined> {
-    const manufacturer = this.manufacturerStore.get(id);
-    if (!manufacturer) return undefined;
-
-    const updated = { ...manufacturer, sortOrder: newOrder };
-    this.manufacturerStore.set(id, updated);
-    return updated;
-  }
-
-  // Material implementations
-  async getMaterials(): Promise<Material[]> {
-    return Array.from(this.materialStore.values())
-      .sort((a, b) => {
-        if (a.sortOrder !== null && b.sortOrder !== null) {
-          return a.sortOrder - b.sortOrder;
-        }
-        return a.name.localeCompare(b.name);
-      });
-  }
-
-  async createMaterial(insertMaterial: InsertMaterial): Promise<Material> {
-    const id = this.materialCurrentId++;
-    const material: Material = {
-      ...insertMaterial,
-      density: insertMaterial.density ?? null,
-      isHygroscopic: insertMaterial.isHygroscopic ?? false,
-      id,
-      createdAt: new Date(),
-      sortOrder: 999 // Default to end of list
-    };
-    this.materialStore.set(id, material);
-    return material;
-  }
-
-  async deleteMaterial(id: number): Promise<boolean> {
-    return this.materialStore.delete(id);
-  }
-
-  async updateMaterialOrder(id: number, newOrder: number): Promise<Material | undefined> {
-    const material = this.materialStore.get(id);
-    if (!material) return undefined;
-
-    const updated = { ...material, sortOrder: newOrder };
-    this.materialStore.set(id, updated);
-    return updated;
-  }
-
-  // Color implementations
-  async getColors(): Promise<Color[]> {
-    return Array.from(this.colorStore.values());
-  }
-
-  async createColor(insertColor: InsertColor): Promise<Color> {
-    const id = this.colorCurrentId++;
-    const color: Color = { ...insertColor, id, createdAt: new Date() };
-    this.colorStore.set(id, color);
-    return color;
-  }
-
-  async deleteColor(id: number): Promise<boolean> {
-    return this.colorStore.delete(id);
-  }
-
-  // Diameter implementations
-  async getDiameters(): Promise<Diameter[]> {
-    return Array.from(this.diameterStore.values());
-  }
-
-  async createDiameter(insertDiameter: InsertDiameter): Promise<Diameter> {
-    const id = this.diameterCurrentId++;
-    const diameter: Diameter = { ...insertDiameter, id, createdAt: new Date() };
-    this.diameterStore.set(id, diameter);
-    return diameter;
-  }
-
-  async deleteDiameter(id: number): Promise<boolean> {
-    return this.diameterStore.delete(id);
-  }
-
-  // Storage Location implementations
-  async getStorageLocations(): Promise<StorageLocation[]> {
-    return Array.from(this.storageLocationStore.values())
-      .sort((a, b) => {
-        if (a.sortOrder !== null && b.sortOrder !== null) {
-          return a.sortOrder - b.sortOrder;
-        }
-        return a.name.localeCompare(b.name);
-      });
-  }
-
-  async createStorageLocation(insertLocation: InsertStorageLocation): Promise<StorageLocation> {
-    const id = this.storageLocationCurrentId++;
-    const location: StorageLocation = {
-      ...insertLocation,
-      id,
-      createdAt: new Date(),
-      sortOrder: 999 // Default to end of list
-    };
-    this.storageLocationStore.set(id, location);
-    return location;
-  }
-
-  async deleteStorageLocation(id: number): Promise<boolean> {
-    return this.storageLocationStore.delete(id);
-  }
-
-  async updateStorageLocationOrder(id: number, newOrder: number): Promise<StorageLocation | undefined> {
-    const location = this.storageLocationStore.get(id);
-    if (!location) return undefined;
-
-    const updated = { ...location, sortOrder: newOrder };
-    this.storageLocationStore.set(id, updated);
-    return updated;
   }
 }
 

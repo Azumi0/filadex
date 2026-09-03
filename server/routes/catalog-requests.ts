@@ -1,9 +1,5 @@
 import type { Express } from "express";
-import { and, desc, eq } from "drizzle-orm";
-import { db } from "../db";
 import {
-  catalogRequests,
-  users,
   insertCatalogRequestSchema,
   insertManufacturerSchema,
   insertMaterialSchema,
@@ -39,11 +35,7 @@ export function registerCatalogRequestRoutes(app: Express): void {
       // before it ever reaches an admin's review queue.
       ENTITY_CONFIG[entityType].schema.parse(payload);
 
-      const [created] = await db.insert(catalogRequests).values({
-        userId: req.userId,
-        entityType,
-        payload,
-      }).returning();
+      const created = await storage.createCatalogRequest(req.userId, entityType, payload);
 
       res.status(201).json(created);
     } catch (error) {
@@ -60,23 +52,7 @@ export function registerCatalogRequestRoutes(app: Express): void {
     try {
       const status = typeof req.query.status === "string" ? req.query.status : undefined;
 
-      const requests = await db
-        .select({
-          id: catalogRequests.id,
-          entityType: catalogRequests.entityType,
-          payload: catalogRequests.payload,
-          status: catalogRequests.status,
-          reviewNote: catalogRequests.reviewNote,
-          reviewedAt: catalogRequests.reviewedAt,
-          createdAt: catalogRequests.createdAt,
-          requestedBy: users.username,
-        })
-        .from(catalogRequests)
-        .leftJoin(users, eq(catalogRequests.userId, users.id))
-        .where(status ? eq(catalogRequests.status, status) : undefined)
-        .orderBy(desc(catalogRequests.createdAt));
-
-      res.json(requests);
+      res.json(await storage.listCatalogRequests(status));
     } catch (error) {
       appLogger.error("Error fetching catalog requests:", error);
       res.status(500).json({ message: "Failed to fetch requests" });
@@ -86,26 +62,15 @@ export function registerCatalogRequestRoutes(app: Express): void {
   // Current user's own requests, so they can see what happened to their submissions.
   app.get("/api/catalog-requests/mine", authenticate, async (req, res) => {
     try {
-      const requests = await db
-        .select()
-        .from(catalogRequests)
-        .where(eq(catalogRequests.userId, req.userId))
-        .orderBy(desc(catalogRequests.createdAt));
-
-      res.json(requests);
+      res.json(await storage.getCatalogRequestsByUser(req.userId));
     } catch (error) {
       appLogger.error("Error fetching your catalog requests:", error);
       res.status(500).json({ message: "Failed to fetch your requests" });
     }
   });
 
-  async function loadPendingRequest(id: number): Promise<CatalogRequest | undefined> {
-    const [request] = await db.select().from(catalogRequests).where(and(eq(catalogRequests.id, id), eq(catalogRequests.status, "pending")));
-    return request;
-  }
-
   async function notifyRequester(request: CatalogRequest, approved: boolean, reviewNote?: string | null) {
-    const [requester] = await db.select().from(users).where(eq(users.id, request.userId));
+    const requester = await storage.getUser(request.userId);
     if (!requester?.email) return;
 
     const config = ENTITY_CONFIG[request.entityType as keyof typeof ENTITY_CONFIG];
@@ -125,7 +90,7 @@ export function registerCatalogRequestRoutes(app: Express): void {
         return res.status(400).json({ message: "Invalid request ID" });
       }
 
-      const request = await loadPendingRequest(id);
+      const request = await storage.getPendingCatalogRequest(id);
       if (!request) {
         return res.status(404).json({ message: "Pending request not found" });
       }
@@ -138,11 +103,10 @@ export function registerCatalogRequestRoutes(app: Express): void {
       const validatedPayload = config.schema.parse(request.payload);
       await config.create(validatedPayload);
 
-      const [updated] = await db
-        .update(catalogRequests)
-        .set({ status: "approved", reviewedBy: req.userId, reviewedAt: new Date() })
-        .where(eq(catalogRequests.id, id))
-        .returning();
+      const updated = await storage.reviewCatalogRequest(id, {
+        status: "approved",
+        reviewedBy: req.userId,
+      });
 
       await notifyRequester(request, true).catch((err) => appLogger.error("Failed to notify requester of approval:", err));
 
@@ -166,18 +130,18 @@ export function registerCatalogRequestRoutes(app: Express): void {
         return res.status(400).json({ message: "Invalid request ID" });
       }
 
-      const request = await loadPendingRequest(id);
+      const request = await storage.getPendingCatalogRequest(id);
       if (!request) {
         return res.status(404).json({ message: "Pending request not found" });
       }
 
       const reviewNote = typeof req.body?.note === "string" ? req.body.note : null;
 
-      const [updated] = await db
-        .update(catalogRequests)
-        .set({ status: "rejected", reviewNote, reviewedBy: req.userId, reviewedAt: new Date() })
-        .where(eq(catalogRequests.id, id))
-        .returning();
+      const updated = await storage.reviewCatalogRequest(id, {
+        status: "rejected",
+        reviewedBy: req.userId,
+        reviewNote,
+      });
 
       await notifyRequester(request, false, reviewNote).catch((err) => appLogger.error("Failed to notify requester of rejection:", err));
 

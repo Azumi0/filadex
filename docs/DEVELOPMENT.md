@@ -196,20 +196,39 @@ The database schema is defined in `shared/schema.ts` using Drizzle ORM.
 **To update the database schema:**
 
 1. Modify the schema in `shared/schema.ts`
-2. Push changes to the database:
+2. Generate a migration from the change:
    ```bash
-   npm run db:push
+   npm run db:generate
+   ```
+   This writes a new numbered `.sql` file into `migrations/pg` and records it in
+   `migrations/pg/meta/_journal.json`. Commit both.
+3. Apply it:
+   ```bash
+   npm run db:migrate
    ```
 
-**Note**: `db:push` generates SQL migrations automatically. For production, you may want to use Drizzle migrations instead.
+**Note**: `npm run db:push` applies the schema directly, without a migration
+file. It is convenient for a scratch database, but a deployment only ever gets
+what is in `migrations/pg`, so anything that has to reach one needs a generated
+migration.
 
 ### Running Migrations
 
-Manual migrations are in the `migrations/` directory:
+`npm run db:migrate` (`scripts/migrate.ts`) is the only migration entry point,
+and `docker-entrypoint.sh` runs it on every container start. It handles three
+cases: a fresh database is created from the generated migrations; a database
+already on them gets whatever is new; and a pre-Drizzle installation is first
+caught up on the frozen scripts in `migrations/legacy` (see the README there)
+and then recorded at the baseline.
+
+To check that an existing installation can still upgrade:
 
 ```bash
-node run-migration.js
+npm run db:verify-upgrade
 ```
+
+It builds a pre-Drizzle database, seeds it, upgrades it, and compares the result
+against a fresh install. It needs Docker, and CI runs it on every pull request.
 
 ### Initializing Data
 

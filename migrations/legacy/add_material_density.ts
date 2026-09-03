@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db } from "../server/db";
+import type { LegacyDatabase } from "./types";
 import { addColumnIfMissing } from "./helpers";
 
 /**
@@ -8,12 +8,11 @@ import { addColumnIfMissing } from "./helpers";
  * (existing rows use varied vendor-specific names like "PLA Basic" or
  * "PA6-CF", not exact material-type strings). Nullable and always editable
  * per material — seeding is a starting point, not a requirement.
- * Run with: npx tsx migrations/add_material_density.ts
  */
-export async function runMigration() {
+export async function runMigration(db: LegacyDatabase) {
   console.log("Starting migration: material density...");
 
-  await addColumnIfMissing("materials", "density", sql`ALTER TABLE materials ADD COLUMN density NUMERIC;`);
+  await addColumnIfMissing(db, "materials", "density", sql`ALTER TABLE materials ADD COLUMN density NUMERIC;`);
   console.log("✓ Added density column to materials");
 
   const seeds: Array<{ density: number; pattern: string }> = [
@@ -50,10 +49,3 @@ export async function runMigration() {
 
   console.log("Migration completed successfully!");
 }
-
-runMigration()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error("Migration failed:", error);
-    process.exit(1);
-  });

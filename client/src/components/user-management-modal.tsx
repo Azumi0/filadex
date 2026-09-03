@@ -16,10 +16,32 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Trash2, Edit, UserPlus } from "lucide-react";
 
-// Create a function to generate the schema with translations
-const createUserFormSchema = (t: (key: string) => string) => z.object({
-  username: z.string().min(3, t('users.usernameMinLength')),
-  password: z.string().min(6, t('auth.passwordRequirements')).optional(),
+// Create a function to generate the schema with translations.
+// The username rules mirror usernameSchema in shared/schema.ts, which both
+// /api/users endpoints apply - a form that accepts more than the server does
+// turns a field-level message into an untranslated toast.
+//
+// `heldUsername` is the name the edited user already has, and is exempt from
+// those rules, because PUT /api/users/:id exempts it: an upgraded install may
+// hold a name the rules now refuse, from before either endpoint validated
+// anything, and this form prefills the username. Without the exemption, editing
+// such a user at all would fail on a field nobody touched. Typing any other
+// name, recasing included, is checked - matching what the endpoint will do.
+const createUserFormSchema = (t: (key: string) => string, heldUsername?: string) => z.object({
+  username: z.string().superRefine((value, ctx) => {
+    if (value === heldUsername) return;
+    const rules = z.string()
+      .min(3, t('users.usernameMinLength'))
+      .max(30, t('auth.usernameTooLong'))
+      .regex(/^[a-zA-Z0-9_-]+$/, t('auth.usernameInvalidChars'));
+    const result = rules.safeParse(value);
+    if (!result.success) {
+      for (const issue of result.error.errors) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: issue.message });
+      }
+    }
+  }),
+  password: z.string().min(8, t('auth.passwordTooShort')).optional(),
   isAdmin: z.boolean().default(false),
   forceChangePassword: z.boolean().default(true),
 });
@@ -33,7 +55,7 @@ export function UserManagementModal({ open, onOpenChange }: { open: boolean; onO
   const [activeTab, setActiveTab] = useState("users");
 
   // Create the schema with translations
-  const userFormSchema = createUserFormSchema(t);
+  const userFormSchema = createUserFormSchema(t, editingUser?.username);
   type UserFormValues = z.infer<typeof userFormSchema>;
 
   const { data: users = [], isLoading } = useQuery({

@@ -1,44 +1,18 @@
-// Import postgres directly
-import pg from 'pg';
-const { Pool } = pg;
+import { sql } from "drizzle-orm";
+import type { LegacyDatabase } from "./types";
 
-// Create a fallback logger in case the real logger is not available
-const fallbackLogger = {
+// This used to try to import server/utils/logger and fall back to the console
+// if that failed. Legacy migrations may not import from server/, so the console
+// is all there is.
+const logger = {
   info: console.log,
   error: console.error,
   warn: console.warn,
   debug: console.log
 };
 
-type Logger = typeof fallbackLogger;
-let logger: Logger = fallbackLogger;
-
-// Create a database connection directly
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgres://filadex:filadex@db:5432/filadex'
-});
-
-async function importDependencies(): Promise<void> {
+export async function runMigration(db: LegacyDatabase): Promise<void> {
   try {
-    // Try to import the logger
-    try {
-      const loggerModule = await import('../server/utils/logger');
-      if (loggerModule.logger) {
-        logger = loggerModule.logger as Logger;
-      }
-    } catch (loggerError) {
-      console.log('Using fallback logger');
-    }
-  } catch (error) {
-    console.error('Error importing dependencies:', error);
-  }
-}
-
-export async function runMigration(): Promise<void> {
-  try {
-    // Import dependencies first
-    await importDependencies();
-
     logger.info('Starting migration: Adding user_id column to filaments table');
 
     // Check if the column already exists
@@ -49,7 +23,7 @@ export async function runMigration(): Promise<void> {
       AND column_name = 'user_id';
     `;
 
-    const { rows } = await pool.query(checkColumnQuery);
+    const { rows } = await db.execute(sql.raw(checkColumnQuery));
     
     // Add user_id column if it doesn't exist
     if (rows.length === 0) {
@@ -61,11 +35,11 @@ export async function runMigration(): Promise<void> {
       `;
       
       try {
-        const usersResult = await pool.query(checkUsersQuery);
+        const usersResult = await db.execute(sql.raw(checkUsersQuery));
         const userCount = parseInt(usersResult.rows[0].count as string);
         
         // Add the user_id column
-        await pool.query(`
+        await db.execute(sql`
           ALTER TABLE filaments
           ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
         `);
@@ -76,7 +50,7 @@ export async function runMigration(): Promise<void> {
             SELECT COUNT(*) as count FROM filaments;
           `;
           
-          const filamentsResult = await pool.query(checkFilamentsQuery);
+          const filamentsResult = await db.execute(sql.raw(checkFilamentsQuery));
           const filamentCount = parseInt(filamentsResult.rows[0].count as string);
           
           if (filamentCount > 0) {
@@ -87,15 +61,15 @@ export async function runMigration(): Promise<void> {
               SELECT id FROM users ORDER BY id LIMIT 1;
             `;
             
-            const firstUserResult = await pool.query(firstUserQuery);
+            const firstUserResult = await db.execute(sql.raw(firstUserQuery));
             
             if (firstUserResult.rows.length > 0) {
               const firstUserId = firstUserResult.rows[0].id as number;
               
               // Update all existing filaments to belong to the first user
-              await pool.query(`
-                UPDATE filaments SET user_id = $1;
-              `, [firstUserId]);
+              await db.execute(sql`
+                UPDATE filaments SET user_id = ${firstUserId};
+              `);
               
               logger.info(`Successfully assigned all filaments to user ID ${firstUserId}`);
             }
@@ -113,13 +87,6 @@ export async function runMigration(): Promise<void> {
   } catch (error) {
     logger.error('Migration failed:', error);
     throw error;
-  } finally {
-    // Close the pool when done
-    try {
-      await pool.end();
-    } catch (err) {
-      console.error('Error closing pool:', err);
-    }
   }
 }
 

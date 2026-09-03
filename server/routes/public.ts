@@ -1,11 +1,9 @@
 import type { Express } from "express";
-import { eq, and, inArray, isNull } from "drizzle-orm";
-import { db } from "../db";
-import { users, userSharing, materials } from "../../shared/schema";
 import { authenticate } from "../auth";
 import { storage } from "../storage";
 import { logger as appLogger } from "../utils/logger";
 import { validateId } from "../utils/validation";
+import { isOneOfMaterials } from "../utils/materials";
 
 export function registerPublicRoutes(app: Express): void {
   // Get public filaments for a specific user by ID
@@ -17,18 +15,14 @@ export function registerPublicRoutes(app: Express): void {
       }
 
       // Get user information
-      const [user] = await db.select().from(users).where(eq(users.id, userId));
+      const user = await storage.getUser(userId);
 
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
 
       // Get user's sharing settings
-      const sharingSettings = await db.select().from(userSharing)
-        .where(and(
-          eq(userSharing.userId, userId),
-          eq(userSharing.isPublic, true)
-        ));
+      const sharingSettings = await storage.getPublicUserSharing(userId);
 
       // Check if user has any public filaments
       if (sharingSettings.length === 0) {
@@ -50,12 +44,10 @@ export function registerPublicRoutes(app: Express): void {
           .filter((s) => s.materialId !== null)
           .map((s) => s.materialId as number);
 
-        const sharedMaterials = sharedMaterialIds.length > 0
-          ? await db.select().from(materials).where(inArray(materials.id, sharedMaterialIds))
-          : [];
-        const sharedMaterialNames = new Set(sharedMaterials.map((m) => m.name));
+        const sharedMaterials = await storage.getMaterialsByIds(sharedMaterialIds);
+        const isShared = isOneOfMaterials(sharedMaterials.map((m) => m.name));
 
-        publicFilaments = filaments.filter((filament) => sharedMaterialNames.has(filament.material));
+        publicFilaments = filaments.filter((filament) => isShared(filament.material));
       }
 
       // Return filaments with user information
@@ -77,35 +69,13 @@ export function registerPublicRoutes(app: Express): void {
     try {
       const { materialId, isPublic } = req.body;
 
-      // Check if sharing already exists
-      const existingSharing = await db.select()
-        .from(userSharing)
-        .where(
-          materialId
-            ? and(eq(userSharing.userId, req.userId), eq(userSharing.materialId, materialId))
-            : and(eq(userSharing.userId, req.userId), isNull(userSharing.materialId))
-        );
+      const { sharing, created } = await storage.upsertUserSharing(
+        req.userId,
+        materialId || null,
+        isPublic,
+      );
 
-      if (existingSharing.length > 0) {
-        // Update existing sharing
-        const [updated] = await db.update(userSharing)
-          .set({ isPublic })
-          .where(eq(userSharing.id, existingSharing[0].id))
-          .returning();
-
-        return res.json(updated);
-      }
-
-      // Create new sharing
-      const [newSharing] = await db.insert(userSharing)
-        .values({
-          userId: req.userId,
-          materialId: materialId || null,
-          isPublic
-        })
-        .returning();
-
-      res.status(201).json(newSharing);
+      res.status(created ? 201 : 200).json(sharing);
     } catch (error) {
       appLogger.error("Error updating sharing:", error);
       res.status(500).json({ message: "Server error" });
@@ -114,10 +84,7 @@ export function registerPublicRoutes(app: Express): void {
 
   app.get("/api/sharing", authenticate, async (req, res) => {
     try {
-      const sharingSettings = await db.select().from(userSharing)
-        .where(eq(userSharing.userId, req.userId));
-
-      res.json(sharingSettings);
+      res.json(await storage.getUserSharing(req.userId));
     } catch (error) {
       appLogger.error("Error fetching sharing:", error);
       res.status(500).json({ message: "Server error" });

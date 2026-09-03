@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1788384298744,
+      "tag": "0000_right_mathemanic",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788388205738,
+      "tag": "0001_seed_email_settings_row",
+      "breakpoints": true
+    }
+  ]
+}
