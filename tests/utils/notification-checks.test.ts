@@ -6,11 +6,11 @@
  * runScheduledChecks() plus what it sends and what it records.
  */
 import { beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { runScheduledChecks } from "../../server/utils/notification-checks";
 import { storage } from "../../server/storage";
 import { db } from "../helpers/db";
-import { filaments, users } from "../../shared/schema";
+import { filaments, materials, users } from "../../shared/schema";
 import { mailbox, lastMailTo } from "../helpers/mailbox";
 
 let aliceId: number;
@@ -271,5 +271,29 @@ describe("who gets checked at all", () => {
     await runScheduledChecks();
 
     expect(mailbox).toHaveLength(0);
+  });
+});
+
+describe("per-user hygroscopy", () => {
+  // With Personal Catalogs, the hygroscopic-name lookup is per user: one user
+  // marking a private material hygroscopic must not start flagging every user's
+  // Spools. See docs/adr/0003-per-user-material-catalog.md.
+  it("reminds only the user whose Personal Catalog marks the material hygroscopic", async () => {
+    const alice = await storage.getUser(aliceId);
+    const bob = await createUser();
+
+    // Both declare "Damp" - auto-registered into each Personal Catalog, dry.
+    await giveSpool(aliceId, { name: "Alice Damp", material: "Damp", lastDryingDate: daysAgo(400) });
+    await giveSpool(bob.id, { name: "Bob Damp", material: "Damp", lastDryingDate: daysAgo(400) });
+
+    // Only Alice's copy is hygroscopic.
+    await db.update(materials).set({ isHygroscopic: true })
+      .where(and(eq(materials.userId, aliceId), eq(materials.name, "Damp")));
+
+    await runScheduledChecks();
+
+    expect(lastMailTo(alice!.email!)?.html).toContain("Alice Damp");
+    expect(lastMailTo(bob.email!)).toBeUndefined();
+    expect(mailbox.some((m) => m.html.includes("Bob Damp"))).toBe(false);
   });
 });

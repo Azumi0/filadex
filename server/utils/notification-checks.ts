@@ -1,5 +1,4 @@
 import { storage } from "../storage";
-import { isOneOfMaterials } from "./materials";
 import { sendMail } from "./mailer";
 import { lowStockEmail, dryingReminderEmail } from "./email-templates";
 import { logger } from "./logger";
@@ -48,10 +47,12 @@ export async function runScheduledChecks(): Promise<void> {
     if (user.notifyDryingReminder) {
       // Per user: a material one user marks hygroscopic in their Personal
       // Catalog must not start flagging every user's Spools.
-      const isHygroscopic = isOneOfMaterials(await storage.getHygroscopicMaterialNames(user.id));
+      const hygroscopic = new Set(
+        (await storage.getHygroscopicMaterialNames(user.id)).map((name) => name.toLowerCase()),
+      );
       const reminderDays = user.dryingReminderDays ?? 30;
       const dryingCandidates = userFilaments.filter((f) => {
-        if (!isHygroscopic(f.material)) return false;
+        if (!hygroscopic.has(f.material.toLowerCase())) return false;
         if (
           f.dryingReminderNotifiedAt &&
           Date.now() - f.dryingReminderNotifiedAt.getTime() < DRYING_REMINDER_COOLDOWN_MS
