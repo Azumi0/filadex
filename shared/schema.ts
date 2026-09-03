@@ -130,6 +130,15 @@ export type UpdateTheme = z.infer<typeof updateThemeSchema>;
 
 // 3-30 chars, letters/numbers/underscore/hyphen only - shared between the
 // registration schema and the /api/auth/check-username validation.
+//
+// The ASCII-only restriction is deliberate, not an oversight - `müller` really
+// cannot be registered here. Usernames are compared case-insensitively for both
+// uniqueness and login, through LOWER() in server/db/predicates.ts, and that
+// comparison agrees with the users_username_lower_idx unique index only while
+// both stay ASCII: LOWER() on non-ASCII depends on the database's collation,
+// which varies across the installs this project supports. Widening the charset
+// would move correctness onto that collation, so it is not a regex change - it
+// is a uniqueness-and-login question that has to be re-answered together.
 export const usernameSchema = z
   .string()
   .min(3, "Username must be at least 3 characters")
