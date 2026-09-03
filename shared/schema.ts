@@ -285,12 +285,32 @@ export const manufacturers = table("manufacturers", {
 
 export const materials = table("materials", {
   id: t.pk("id"),
-  name: t.text("name").notNull().unique("materials_name_key"),
+  name: t.text("name").notNull(),
+  userId: t.fk("user_id"), // NULL = Global Catalog; set = that user's Personal Catalog
   sortOrder: t.int("sort_order").default(999),
   density: t.numeric("density"), // g/cm^3; lets weight<->length conversions work without an external lookup
   isHygroscopic: t.bool("is_hygroscopic").default(false), // drives the drying-reminder email check
   createdAt: t.timestamptz("created_at").defaultNow().notNull()
-});
+}, (table) => [
+  foreignKey({
+    name: "materials_user_id_fkey",
+    columns: [table.userId],
+    foreignColumns: [users.id],
+  }).onDelete("cascade"),
+  // Unique within the Global Catalog, and unique within each Personal Catalog,
+  // case-insensitively. Two partial indexes rather than one on
+  // (user_id, lower(name)) because SQL NULLs never conflict with each other, so
+  // a single index would let the Global Catalog hold duplicates. Precedent:
+  // users_username_lower_idx.
+  uniqueIndex("materials_global_name_lower_idx")
+    .on(sql`lower(${table.name})`).where(sql`${table.userId} IS NULL`),
+  // `coalesce(user_id, 0)` rather than a bare `user_id`: the WHERE clause means
+  // it is only ever `user_id` for rows this index covers, but drizzle-kit 0.30's
+  // introspection cannot round-trip an index whose key list mixes a bare column
+  // with an expression, and the coalesce makes both keys expressions.
+  uniqueIndex("materials_user_name_lower_idx")
+    .on(sql`coalesce(${table.userId}, 0)`, sql`lower(${table.name})`).where(sql`${table.userId} IS NOT NULL`),
+]);
 
 export const colors = table("colors", {
   id: t.pk("id"),
@@ -323,6 +343,9 @@ export const insertMaterialSchema = createInsertSchema(materials).omit({
   id: true,
   createdAt: true,
   sortOrder: true,
+  // Direct creation always targets the Global Catalog; a Personal Catalog entry
+  // is only ever auto-registered from a declared material (see storage.ts).
+  userId: true,
 });
 
 export const insertColorSchema = createInsertSchema(colors).omit({
