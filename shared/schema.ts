@@ -183,8 +183,14 @@ export const adminCreateUserSchema = z.object({
 const omitIfBlank = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
 
+// The username is checked against usernameSchema by the endpoint rather than
+// here, because whether the rules apply depends on the name the user already
+// has: before either endpoint was validated an admin could create any name at
+// all, and the edit form prefills the username, so re-applying the rules to
+// every request would lock an upgraded install out of administering such an
+// account over a field nobody touched. Setting a name is still checked.
 export const adminUpdateUserSchema = z.object({
-  username: omitIfBlank(usernameSchema),
+  username: omitIfBlank(z.string()),
   password: omitIfBlank(passwordSchema),
   isAdmin: flexibleBoolean.optional(),
   forceChangePassword: flexibleBoolean.optional(),

@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { type User, adminCreateUserSchema, adminUpdateUserSchema } from "../../shared/schema";
+import { type User, adminCreateUserSchema, adminUpdateUserSchema, usernameSchema } from "../../shared/schema";
 import { authenticate, isAdmin, hashPassword } from "../auth";
 import { storage, type UserChanges, type UserPreferences } from "../storage";
 import { logger as appLogger } from "../utils/logger";
@@ -190,6 +190,18 @@ export function registerUserRoutes(app: Express): void {
       const updateData: UserChanges = {};
 
       if (username) {
+        // The rules apply to a name being set, not to one already held. An
+        // upgraded install may hold a name they now refuse, from before either
+        // endpoint validated anything, and the edit form prefills the username -
+        // so resubmitting it unchanged has to stay an edit the admin can make.
+        // Anything else, recasing included, is setting a new name and is checked.
+        if (username !== existingUser.username) {
+          const validated = usernameSchema.safeParse(username);
+          if (!validated.success) {
+            return res.status(400).json({ message: validated.error.errors[0]?.message || "Invalid input" });
+          }
+        }
+
         // Only a name that resolves to a different user can collide. Changing
         // just the capitalisation is this same user renaming themselves, so it
         // skips the check - but it is still applied, unlike before, when it was

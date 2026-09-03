@@ -11,7 +11,7 @@ import request from "supertest";
 import type { Express } from "express";
 import { registerAuthRoutes } from "../../server/routes/auth";
 import { registerUserRoutes } from "../../server/routes/users";
-import { initializeAdminUser } from "../../server/auth";
+import { hashPassword, initializeAdminUser } from "../../server/auth";
 import { storage } from "../../server/storage";
 import { createApp, loginAs, registerAndVerify } from "../helpers/app";
 
@@ -530,6 +530,85 @@ describe("PUT /api/users/:id", () => {
     const unchanged = await storage.getUser(bob.id);
     expect(unchanged?.username).toBe("bob");
     await expect(loginAs(app, "bob", "bobs-password")).resolves.toBeTruthy();
+  });
+
+  // Before either endpoint was validated an admin could create any name at all,
+  // so an upgraded install may hold one the rules now refuse. The edit form
+  // prefills the username, which would resubmit that name unchanged on any edit
+  // - locking the account out of administration over a field nobody touched.
+  // The rules apply to a name being set, not to one already held.
+  describe("a username the rules would now refuse, held since before they applied", () => {
+    async function createLegacyUser(username: string) {
+      return await storage.createUser({
+        username,
+        password: await hashPassword("muellers-password"),
+        email: `${encodeURIComponent(username)}@example.com`,
+        role: "user",
+        isAdmin: false,
+        emailVerified: true,
+        forceChangePassword: false,
+      });
+    }
+
+    it("still accepts an edit that resubmits it unchanged", async () => {
+      const legacy = await createLegacyUser("m\u00fcller");
+
+      const response = await request(app)
+        .put(`/api/users/${legacy.id}`)
+        .set("Cookie", adminCookie)
+        .send({ username: "m\u00fcller", isAdmin: true });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ username: "m\u00fcller", isAdmin: true });
+    });
+
+    it("still accepts a password reset that resubmits it unchanged", async () => {
+      const legacy = await createLegacyUser("m\u00fcller2");
+
+      await request(app)
+        .put(`/api/users/${legacy.id}`)
+        .set("Cookie", adminCookie)
+        .send({ username: "m\u00fcller2", password: "a-new-password" })
+        .expect(200);
+
+      await expect(loginAs(app, "m\u00fcller2", "a-new-password")).resolves.toBeTruthy();
+    });
+
+    // Recasing is setting a new name, not keeping the one already held, so it
+    // gets the same answer any other rename to a refused name would.
+    it("refuses to change it, even by capitalisation alone", async () => {
+      const legacy = await createLegacyUser("m\u00fcller3");
+
+      const response = await request(app)
+        .put(`/api/users/${legacy.id}`)
+        .set("Cookie", adminCookie)
+        .send({ username: "M\u00fcller3" });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe(
+        "Username may only contain letters, numbers, underscores, and hyphens",
+      );
+
+      const unchanged = await storage.getUser(legacy.id);
+      expect(unchanged?.username).toBe("m\u00fcller3");
+    });
+
+    // The exemption is for the name this user already has, not for refused
+    // names generally.
+    it("does not let another user be renamed onto a name like it", async () => {
+      await createLegacyUser("m\u00fcller4");
+      const bob = await createUserAsAdmin({ username: "bob", password: "bobs-password" });
+
+      const response = await request(app)
+        .put(`/api/users/${bob.id}`)
+        .set("Cookie", adminCookie)
+        .send({ username: "m\u00fcller4" });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe(
+        "Username may only contain letters, numbers, underscores, and hyphens",
+      );
+    });
   });
 
   // The endpoint validated nothing before, so an empty string meant "leave this

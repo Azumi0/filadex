@@ -410,9 +410,9 @@ is one branch and one test.
 
 ## Behaviour changes that need release notes
 
-Fixing a bug changes behaviour, and two of these change it in ways an
-administrator can see without having done anything. Neither belongs only in this
-document — both go in the release notes for the version that ships them.
+Fixing a bug changes behaviour, and three of these change it in ways an
+administrator can see without having done anything. None belongs only in this
+document — all three go in the release notes for the version that ships them.
 
 **Case-insensitive material matching can make a spool public that was not.**
 Consolidating the two matchers into `server/utils/materials.ts` fixed
@@ -438,6 +438,27 @@ column's type, so a database created by `drizzle-kit push` — which
 columns and would read them in the Node process's local zone. `scripts/migrate.ts`
 now refuses to baseline such a database rather than declaring it correct; see
 `assertMatchesBaseline` above.
+
+**Admin-created usernames are validated, and some existing ones cannot be
+renamed.** `usernameSchema` has always applied to self-registration, but on
+`main` both `POST /api/users` and `PUT /api/users/:id` destructured `req.body`
+and validated nothing, and the admin form asked only for three characters. An
+admin could therefore create `müller`, which no one could ever register. Both
+endpoints now apply the same rules, so that name can no longer be created —
+worth stating plainly, because the UI is German and the rule is ASCII-only.
+
+Accounts already holding such a name keep working: `POST /api/auth/login` looks
+the user up without validating, so nobody is locked out. They also stay
+administrable, because the rules apply to a name being *set* rather than one
+already held — the edit form prefills the username, and without that exemption
+an admin resetting the password on `müller` would have been refused over a field
+they never touched. What such an account cannot do is change its name, including
+by capitalisation alone: that is setting a new name, and it gets the same answer
+any other rename to a refused name gets. Renaming it to an acceptable name is
+the way out.
+
+Whether ASCII-only is the right rule for a German-language product is a product
+decision, not a refactoring one, so it is left as it was found.
 
 ## Consequences
 
