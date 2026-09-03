@@ -15,6 +15,7 @@ import {
 } from "@shared/schema";
 import { parseCSVLine, escapeCsvField } from "../utils/csv-parser";
 import { registerCrudSettingsRoutes, simpleNameParseLine } from "../utils/settings-crud";
+import { equalsIgnoreCase } from "../db/predicates";
 
 export function registerSettingsRoutes(app: Express): void {
   registerCrudSettingsRoutes<Manufacturer, { name: string }>(app, {
@@ -69,9 +70,8 @@ export function registerSettingsRoutes(app: Express): void {
       },
     },
     // Case-insensitive, to agree with how a declared material resolves to a
-    // Catalog Material (server/db/predicates.ts, storage.resolveMaterial).
-    isInUse: (filament: Filament, item) =>
-      filament.material.toLowerCase() === item.name.toLowerCase(),
+    // Catalog Material (storage.resolveMaterial).
+    isInUse: (filament: Filament, item) => equalsIgnoreCase(filament.material, item.name),
   });
 
   registerCrudSettingsRoutes<Color, { name: string; code: string }>(app, {

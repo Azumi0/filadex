@@ -183,6 +183,12 @@ async function findOrCreateFilamentType(userId: number, fields: FilamentTypeFiel
   return created.id;
 }
 
+// A material row is in scope for a user when it is global (user_id NULL) or
+// their own Personal Catalog entry. Written once here because getMaterials,
+// getHygroscopicMaterialNames and resolveMaterial all need exactly this.
+const materialInScopeFor = (userId: number) =>
+  or(isNull(materials.userId), eq(materials.userId, userId));
+
 // A declared material that resolves to no Catalog Material is registered into
 // the declaring user's Personal Catalog, so from here on every declared material
 // resolves to a row - the point of docs/adr/0003. This fires on every path
@@ -503,10 +509,7 @@ export class DatabaseStorage implements IStorage {
 
   async getHygroscopicMaterialNames(userId: number): Promise<string[]> {
     const rows = await db.select({ name: materials.name }).from(materials)
-      .where(and(
-        eq(materials.isHygroscopic, true),
-        or(isNull(materials.userId), eq(materials.userId, userId)),
-      ));
+      .where(and(eq(materials.isHygroscopic, true), materialInScopeFor(userId)));
     return rows.map((row) => row.name);
   }
 
@@ -890,18 +893,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getMaterials(userId?: number): Promise<Material[]> {
-    const scope = userId === undefined
-      ? undefined
-      : or(isNull(materials.userId), eq(materials.userId, userId));
+    const scope = userId === undefined ? undefined : materialInScopeFor(userId);
     return await db.select().from(materials).where(scope).orderBy(materials.sortOrder, materials.name);
   }
 
   async resolveMaterial(userId: number, declared: string): Promise<Material | undefined> {
     const [row] = await db.select().from(materials)
-      .where(and(
-        eqIgnoreCase(materials.name, declared),
-        or(eq(materials.userId, userId), isNull(materials.userId)),
-      ))
+      .where(and(eqIgnoreCase(materials.name, declared), materialInScopeFor(userId)))
       // The user's own Personal Catalog row wins when a Global one also matches.
       .orderBy(sql`${materials.userId} IS NULL`)
       .limit(1);

@@ -96,9 +96,10 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
         const csvLines: string[] = req.body.csvData.split("\n");
         const startIndex = csvLines[0] && csv.isHeaderRow(csvLines[0]) ? 1 : 0;
         // Import writes Global Catalog rows, so it dedupes against those only -
-        // a Personal Catalog entry with the same name is a different row.
+        // a Personal Catalog entry (userId set) with the same name is a
+        // different row.
         const existing = (await entityStorage.getAll())
-          .filter((item) => !userScoped || item.userId == null);
+          .filter((item) => !userScoped || item.userId === null);
 
         for (let i = startIndex; i < csvLines.length; i++) {
           const line = csvLines[i].trim();
@@ -160,7 +161,7 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
       }
 
       if (userScoped) {
-        const ownsIt = item.userId != null && item.userId === req.userId;
+        const ownsIt = item.userId !== null && item.userId === req.userId;
         // A global row (userId null) stays admin-only; a Personal Catalog row
         // can be deleted by the user who owns it.
         if (!ownsIt && !req.user?.isAdmin) {

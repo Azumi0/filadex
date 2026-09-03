@@ -96,6 +96,17 @@ describe("auto-registration of a declared material", () => {
     expect(view.body.map((m: { name: string }) => m.name)).toEqual(["PETG"]);
   });
 
+  it("resolves to the user's own row when a Global Catalog row of the same name also exists", async () => {
+    const alice = await newUser("alice");
+    const [own] = await db.insert(materials).values({ userId: alice.id, name: "Dualite" }).returning();
+    await storage.createMaterial({ name: "Dualite" });
+
+    const resolved = await storage.resolveMaterial(alice.id, "dualite");
+
+    expect(resolved?.id).toBe(own.id);
+    expect(resolved?.userId).toBe(alice.id);
+  });
+
   it("creates nothing when the material is already in the user's Personal Catalog", async () => {
     const alice = await newUser("alice");
 
