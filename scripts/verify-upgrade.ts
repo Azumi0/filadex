@@ -42,7 +42,7 @@ import { join } from "node:path";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { getTableName, is } from "drizzle-orm";
+import { getTableColumns, getTableName, is } from "drizzle-orm";
 import { PgTable } from "drizzle-orm/pg-core";
 import { buildLegacyDatabase, describeSchema } from "./legacy-db";
 import * as schema from "../shared/schema";
@@ -52,18 +52,28 @@ const { pushSchema } = require("drizzle-kit/api");
 
 // Derived from the schema rather than listed, so a table added by a later
 // migration cannot quietly fall outside the row comparison while it still
-// reports that every row was preserved.
+// reports that every row was preserved. The columns come from the schema for
+// the same reason, in the other direction: a column the schema no longer
+// describes - one a migration under test drops - is not part of "every row
+// preserved", but every column that stays is compared, value for value.
 const TABLES = Object.values(schema)
   .filter((value) => is(value, PgTable))
-  .map((table) => getTableName(table as PgTable))
-  .sort();
+  .map((value) => {
+    const table = value as PgTable;
+    return {
+      name: getTableName(table),
+      columns: Object.values(getTableColumns(table)).map((column) => column.name),
+    };
+  })
+  .sort((a, b) => a.name.localeCompare(b.name));
 
 /** Every row of every table, ordered, as diffable text. */
 async function snapshotData(pool: pg.Pool): Promise<string> {
   const out: string[] = [];
   for (const table of TABLES) {
-    const { rows } = await pool.query(`SELECT * FROM "${table}" ORDER BY 1`);
-    out.push(`-- ${table} (${rows.length} rows)`);
+    const selection = table.columns.map((column) => `"${column}"`).join(", ");
+    const { rows } = await pool.query(`SELECT ${selection} FROM "${table.name}" ORDER BY 1`);
+    out.push(`-- ${table.name} (${rows.length} rows)`);
     for (const row of rows) {
       const ordered = Object.keys(row).sort().map((k) => `${k}=${JSON.stringify(row[k])}`);
       out.push("  " + ordered.join(" "));

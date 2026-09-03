@@ -91,11 +91,6 @@ export const filaments = table("filaments", {
   dryingReminderNotifiedAt: t.timestamp("drying_reminder_notified_at"),
   // Values for this user's customFieldDefinitions, keyed by definition id (as a string)
   customFieldValues: t.json<Record<string, any>>("custom_field_values").default({}),
-  // Written by docker-entrypoint.sh's CREATE TABLE and never read by the
-  // application. Declared so the schema matches the deployed database; see
-  // TODO.md before removing them.
-  createdAt: t.timestamptz("created_at").defaultNow(),
-  updatedAt: t.timestamptz("updated_at").defaultNow(),
 }, (table) => [
   foreignKey({
     name: "filaments_user_id_fkey",
@@ -247,16 +242,11 @@ type FilamentTypeInsertFields = {
   printTemp?: string | null;
 };
 
-// createdAt/updatedAt exist on the filaments table but are not part of the
-// API-facing shape: docker-entrypoint.sh creates them and nothing reads them.
-// See TODO.md.
-type UnusedFilamentColumns = "createdAt" | "updatedAt";
-
-export type Filament = Omit<typeof filaments.$inferSelect, "filamentTypeId" | UnusedFilamentColumns> & FilamentTypeSelectFields & {
+export type Filament = Omit<typeof filaments.$inferSelect, "filamentTypeId"> & FilamentTypeSelectFields & {
   filamentTypeId: number;
 };
 
-export type InsertFilament = Omit<typeof filaments.$inferInsert, "id" | "filamentTypeId" | UnusedFilamentColumns> & FilamentTypeInsertFields;
+export type InsertFilament = Omit<typeof filaments.$inferInsert, "id" | "filamentTypeId"> & FilamentTypeInsertFields;
 
 // Bearbeiten Sie das Schema, um sicherzustellen, dass numerische Felder korrekt konvertiert werden
 // Schema für das Einfügen von Filaments ohne Transformation
