@@ -42,6 +42,7 @@ export function registerSettingsRoutes(app: Express): void {
     basePath: "/api/materials",
     csvFilename: "materials.csv",
     insertSchema: insertMaterialSchema,
+    userScoped: true,
     storage: {
       getAll: (userId) => storage.getMaterials(userId),
       create: (data) => storage.createMaterial(data),
@@ -67,7 +68,10 @@ export function registerSettingsRoutes(app: Express): void {
         return { kind: "create", data: { name, density, isHygroscopic } };
       },
     },
-    isInUse: (filament: Filament, item) => filament.material === item.name,
+    // Case-insensitive, to agree with how a declared material resolves to a
+    // Catalog Material (server/db/predicates.ts, storage.resolveMaterial).
+    isInUse: (filament: Filament, item) =>
+      filament.material.toLowerCase() === item.name.toLowerCase(),
   });
 
   registerCrudSettingsRoutes<Color, { name: string; code: string }>(app, {

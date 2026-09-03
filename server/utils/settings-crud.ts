@@ -23,7 +23,7 @@ type ImportOutcome<InsertT> =
   | { kind: "skip" }
   | { kind: "error" };
 
-export interface CrudEntityConfig<T extends { id: number }, InsertT> {
+export interface CrudEntityConfig<T extends { id: number; userId?: number | null }, InsertT> {
   /** Singular lowercase name used in log/error messages, e.g. "manufacturer" */
   entityName: string;
   /** e.g. "/api/manufacturers" */
@@ -31,9 +31,17 @@ export interface CrudEntityConfig<T extends { id: number }, InsertT> {
   /** CSV attachment filename, e.g. "manufacturers.csv" */
   csvFilename: string;
   insertSchema: ZodType<InsertT>;
+  /**
+   * When set, this entity is a Global Catalog (rows owned by nobody, `userId`
+   * NULL) plus a Personal Catalog per user. GET lists the global rows and the
+   * caller's own; DELETE lets a user remove a row they own, while removing a
+   * global row - and reordering - stay admin-only. Creation stays admin-only and
+   * global regardless. Only `materials` sets this.
+   */
+  userScoped?: true;
   storage: {
-    // `userId` is the caller; only the user-scoped entities (materials) read it,
-    // to list the Global Catalog plus that user's Personal Catalog.
+    // `userId` is the caller; only a `userScoped` entity reads it, to list the
+    // Global Catalog plus that user's Personal Catalog.
     getAll: (userId?: number) => Promise<T[]>;
     create: (data: InsertT) => Promise<T>;
     delete: (id: number) => Promise<boolean>;
@@ -49,11 +57,11 @@ export interface CrudEntityConfig<T extends { id: number }, InsertT> {
   isInUse: (filament: Filament, item: T) => boolean;
 }
 
-export function registerCrudSettingsRoutes<T extends { id: number }, InsertT>(
+export function registerCrudSettingsRoutes<T extends { id: number; userId?: number | null }, InsertT>(
   app: Express,
   config: CrudEntityConfig<T, InsertT>
 ): void {
-  const { entityName, basePath, csvFilename, insertSchema, storage: entityStorage, csv, isInUse } = config;
+  const { entityName, basePath, csvFilename, insertSchema, storage: entityStorage, csv, isInUse, userScoped } = config;
   const label = entityName.charAt(0).toUpperCase() + entityName.slice(1);
 
   app.get(basePath, authenticate, async (req, res) => {
@@ -76,14 +84,21 @@ export function registerCrudSettingsRoutes<T extends { id: number }, InsertT>(
 
   // Direct create/import is admin-only: the shared catalog stays global, and
   // non-admins can only propose additions via POST /api/catalog-requests for
-  // an admin to approve (see settings-crud-list.tsx on the client).
+  // an admin to approve (see settings-crud-list.tsx on the client). This holds
+  // for a userScoped entity too - a user never creates a Catalog Material
+  // directly; they declare one on a Spool (which auto-registers it into their
+  // Personal Catalog) or submit a Catalog Request. POST here always writes a
+  // Global Catalog row.
   app.post(basePath, authenticate, isAdmin, async (req, res) => {
     try {
       if (req.query.import === "csv" && req.body.csvData) {
         const results = { created: 0, duplicates: 0, errors: 0 };
         const csvLines: string[] = req.body.csvData.split("\n");
         const startIndex = csvLines[0] && csv.isHeaderRow(csvLines[0]) ? 1 : 0;
-        const existing = await entityStorage.getAll();
+        // Import writes Global Catalog rows, so it dedupes against those only -
+        // a Personal Catalog entry with the same name is a different row.
+        const existing = (await entityStorage.getAll())
+          .filter((item) => !userScoped || item.userId == null);
 
         for (let i = startIndex; i < csvLines.length; i++) {
           const line = csvLines[i].trim();
@@ -127,18 +142,30 @@ export function registerCrudSettingsRoutes<T extends { id: number }, InsertT>(
     }
   });
 
-  app.delete(`${basePath}/:id`, authenticate, isAdmin, async (req, res) => {
+  // A userScoped entity can't gate DELETE on isAdmin alone: a user may remove a
+  // row they own. The ownership check is done per row below instead.
+  const deleteGuards = userScoped ? [authenticate] : [authenticate, isAdmin];
+  app.delete(`${basePath}/:id`, ...deleteGuards, async (req, res) => {
     try {
       const id = validateId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: `Invalid ${entityName} ID` });
       }
 
-      const items = await entityStorage.getAll();
+      const items = await entityStorage.getAll(req.userId);
       const item = items.find((i) => i.id === id);
 
       if (!item) {
         return res.status(404).json({ message: `${label} not found` });
+      }
+
+      if (userScoped) {
+        const ownsIt = item.userId != null && item.userId === req.userId;
+        // A global row (userId null) stays admin-only; a Personal Catalog row
+        // can be deleted by the user who owns it.
+        if (!ownsIt && !req.user?.isAdmin) {
+          return res.status(403).json({ message: `Cannot delete a ${entityName} you do not own` });
+        }
       }
 
       const filaments = await storage.getFilaments(req.userId);
