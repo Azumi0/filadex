@@ -1107,6 +1107,10 @@ Current preference values are included in the response of `GET /api/auth/me` (`l
 
 ## Sharing
 
+> **Renamed:** the earlier `GET`/`POST /api/sharing` endpoints were removed. Use
+> `GET`/`POST /api/user-sharing` below; the request body for `POST` changed from
+> `{ shareAll, materials[] }` to `{ materialId, isPublic }` (one material per call).
+
 ### Get User Sharing Settings
 
 Returns the sharing settings for the authenticated user.
