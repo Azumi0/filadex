@@ -486,7 +486,7 @@ const translations = {
       ownershipOwn: 'Ihre Ergänzung',
       ownershipGlobal: 'Gemeinsamer Katalog',
       needsAttention: 'Erfordert Aufmerksamkeit',
-      needsAttentionTooltip: 'Legen Sie eine Dichte fest, um die Gewicht-/Längenumrechnung zu ermöglichen, und markieren Sie es als hygroskopisch, um Trocknungserinnerungen für Spulen dieses Materials zu aktivieren.',
+      needsAttentionExplanation: 'Legen Sie eine Dichte fest, um die Gewicht-/Längenumrechnung zu ermöglichen, und markieren Sie es als hygroskopisch, um Trocknungserinnerungen für Spulen dieses Materials zu aktivieren.',
       updateError: 'Das Material konnte nicht aktualisiert werden.',
       edit: 'Material bearbeiten',
       delete: 'Material löschen',

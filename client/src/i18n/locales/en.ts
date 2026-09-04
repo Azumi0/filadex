@@ -505,7 +505,7 @@ const translations = {
       ownershipOwn: 'Your addition',
       ownershipGlobal: 'Shared catalog',
       needsAttention: 'Needs attention',
-      needsAttentionTooltip: 'Set a density to enable weight/length conversion, and mark it hygroscopic to enable drying reminders for spools of this material.',
+      needsAttentionExplanation: 'Set a density to enable weight/length conversion, and mark it hygroscopic to enable drying reminders for spools of this material.',
       updateError: 'The material could not be updated.',
       edit: 'Edit Material',
       delete: 'Delete Material',

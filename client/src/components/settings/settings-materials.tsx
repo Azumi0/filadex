@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { TableCell } from "@/components/ui/table";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Droplet, AlertTriangle } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
@@ -59,11 +58,13 @@ export function MaterialsList() {
   const { user, isAdmin } = useAuth();
   const queryClient = useQueryClient();
 
-  // A user may fill in density/isHygroscopic on a Personal Catalog entry they
-  // own; an admin may do the same on any entry, including the Global Catalog.
-  // Same rule the server enforces on PUT /api/materials/:id - see
-  // docs/adr/0003-per-user-material-catalog.md.
-  const canModify = (item: Material) => item.userId === user?.id || (item.userId === null && isAdmin);
+  // Who may act on a row at all: the owner of a Personal Catalog entry, or an
+  // admin on any entry. Spelled the same way as the server's `ownsOrIsAdmin`
+  // in server/utils/settings-crud.ts, which gates both PUT and DELETE
+  // /api/materials/:id - see docs/adr/0003-per-user-material-catalog.md. It
+  // governs editing density/isHygroscopic and deleting alike, which is why the
+  // one predicate is passed as `canDelete` below.
+  const ownsOrIsAdmin = (item: Material) => item.userId === user?.id || isAdmin;
 
   const updateMutation = useMutation({
     mutationFn: ({ id, ...fields }: { id: number; density?: string | null; isHygroscopic?: boolean }) =>
@@ -89,7 +90,7 @@ export function MaterialsList() {
       columnHeaders={[t("common.name"), t("settings.materials.density"), t("settings.materials.hygroscopic")]}
       emptyLabelSuffix="noMaterials"
       getSearchText={(item) => item.name}
-      canDelete={canModify}
+      canDelete={ownsOrIsAdmin}
       renderAddFields={(form) => (
         <>
           <FormField
@@ -133,7 +134,7 @@ export function MaterialsList() {
         </>
       )}
       renderItemCells={(item) => {
-        const editable = canModify(item);
+        const editable = ownsOrIsAdmin(item);
         // Exactly the state auto-registration leaves a declared material in
         // when it resolved to nothing (see storage.findOrCreateFilamentType) -
         // the owner was never told this happened, which is the defect this UI
@@ -149,25 +150,22 @@ export function MaterialsList() {
                     {item.name}
                   </span>
                 </Badge>
-                {needsAttention && (
-                  <TooltipProvider delayDuration={200}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <AlertTriangle
-                          className="h-4 w-4 text-amber-500 shrink-0 cursor-help"
-                          aria-label={t("settings.materials.needsAttention")}
-                        />
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
-                        <p>{t("settings.materials.needsAttentionTooltip")}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
               </div>
               <span className="block text-xs text-muted-foreground mt-0.5">
                 {item.userId !== null ? t("settings.materials.ownershipOwn") : t("settings.materials.ownershipGlobal")}
               </span>
+              {/* On the row, not behind a hover: the defect being fixed is that
+                  the user was never told why nothing happened, and a tooltip is
+                  invisible on touch and absent from the page itself. */}
+              {needsAttention && (
+                <p className="flex items-start gap-1.5 mt-1 text-xs text-amber-500 whitespace-normal">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>
+                    <span className="font-medium">{t("settings.materials.needsAttention")}</span>{" "}
+                    {t("settings.materials.needsAttentionExplanation")}
+                  </span>
+                </p>
+              )}
             </TableCell>
             <TableCell className="py-1 truncate">
               {editable ? (
