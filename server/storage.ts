@@ -340,7 +340,8 @@ export interface IStorage {
 
   // Material operations
   /** The Global Catalog plus `userId`'s Personal Catalog; the whole table when `userId` is omitted. */
-  getMaterials(userId?: number): Promise<Material[]>;
+  /** The Global Catalog plus that user's Personal Catalog. */
+  getMaterials(userId: number): Promise<Material[]>;
   /**
    * The Catalog Material a declared material names for this user, ignoring case
    * and checking the Personal Catalog before the Global one. `undefined` when it
@@ -894,9 +895,10 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(materials).where(inArray(materials.id, ids));
   }
 
-  async getMaterials(userId?: number): Promise<Material[]> {
-    const scope = userId === undefined ? undefined : materialInScopeFor(userId);
-    return await db.select().from(materials).where(scope).orderBy(materials.sortOrder, materials.name);
+  async getMaterials(userId: number): Promise<Material[]> {
+    return await db.select().from(materials)
+      .where(materialInScopeFor(userId))
+      .orderBy(materials.sortOrder, materials.name);
   }
 
   async resolveMaterial(userId: number, declared: string): Promise<Material | undefined> {

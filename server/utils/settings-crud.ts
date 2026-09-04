@@ -42,7 +42,7 @@ export interface CrudEntityConfig<T extends { id: number; userId?: number | null
   storage: {
     // `userId` is the caller; only a `userScoped` entity reads it, to list the
     // Global Catalog plus that user's Personal Catalog.
-    getAll: (userId?: number) => Promise<T[]>;
+    getAll: (userId: number) => Promise<T[]>;
     create: (data: InsertT) => Promise<T>;
     delete: (id: number) => Promise<boolean>;
     updateOrder?: (id: number, newOrder: number) => Promise<T | undefined>;
@@ -116,8 +116,9 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
         const startIndex = csvLines[0] && csv.isHeaderRow(csvLines[0]) ? 1 : 0;
         // Import writes Global Catalog rows, so it dedupes against those only -
         // a Personal Catalog entry (userId set) with the same name is a
-        // different row.
-        const existing = (await entityStorage.getAll())
+        // different row. The Global Catalog is in scope for every caller, so
+        // listing as the caller and dropping the owned rows yields exactly it.
+        const existing = (await entityStorage.getAll(req.userId))
           .filter((item) => !userScoped || item.userId === null);
 
         for (let i = startIndex; i < csvLines.length; i++) {
