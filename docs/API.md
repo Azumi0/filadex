@@ -462,7 +462,8 @@ the caller's own Personal Catalog - never another user's. See
       "name": "string",
       "userId": "number | null",
       "density": "string | null",
-      "isHygroscopic": "boolean"
+      "isHygroscopic": "boolean",
+      "attentionDismissed": "boolean"
     }
   ]
   ```
@@ -476,6 +477,11 @@ the caller's own Personal Catalog - never another user's. See
     `density: null` and `isHygroscopic: false` is exactly the state left by
     auto-registering a declared material that resolved to nothing (see `POST
     /api/filaments`), and is the row an owner most likely wants to fill in.
+  - `attentionDismissed` is the owner's answer to that prompt. A material can
+    genuinely have no published density and genuinely not be hygroscopic, which
+    is indistinguishable from a row nobody has looked at, so a client must treat
+    `attentionDismissed: true` as "stop flagging this". Set it through `PUT
+    /api/materials/:id`. It is always `false` on a Global Catalog entry.
 - **Error Responses**:
   - `401 Unauthorized`: Not authenticated
   - `500 Internal Server Error`: Failed to fetch materials
@@ -548,9 +554,9 @@ Deletes a material.
 
 ### Update Material
 
-Fills in `density` and/or `isHygroscopic` on a material that already exists.
-There is no way to change `name` or move a row between catalogs here - both
-are fixed at creation.
+Fills in `density`, `isHygroscopic` and/or `attentionDismissed` on a material
+that already exists. There is no way to change `name` or move a row between
+catalogs here - both are fixed at creation.
 
 - **URL**: `/api/materials/:id`
 - **Method**: `PUT`
@@ -561,11 +567,12 @@ are fixed at creation.
   may additionally edit a Global Catalog entry.
 - **URL Parameters**:
   - `id`: The ID of the material
-- **Request Body** (either or both fields):
+- **Request Body** (any one or more of the fields):
   ```json
   {
     "density": "string",
-    "isHygroscopic": "boolean"
+    "isHygroscopic": "boolean",
+    "attentionDismissed": "boolean"
   }
   ```
 - **Response**: `200 OK`
@@ -575,7 +582,8 @@ are fixed at creation.
     "name": "string",
     "userId": "number | null",
     "density": "string | null",
-    "isHygroscopic": "boolean"
+    "isHygroscopic": "boolean",
+    "attentionDismissed": "boolean"
   }
   ```
 - **Error Responses**:

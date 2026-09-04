@@ -76,7 +76,7 @@ export function MaterialsList() {
   const ownsOrIsAdmin = (item: Material) => item.userId === user?.id || isAdmin;
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, ...fields }: { id: number; density?: string | null; isHygroscopic?: boolean }) =>
+    mutationFn: ({ id, ...fields }: { id: number; density?: string | null; isHygroscopic?: boolean; attentionDismissed?: boolean }) =>
       apiRequest(`/api/materials/${id}`, { method: "PUT", body: JSON.stringify(fields) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/materials"] });
@@ -148,7 +148,8 @@ export function MaterialsList() {
         // when it resolved to nothing (see storage.findOrCreateFilamentType) -
         // the owner was never told this happened, which is the defect this UI
         // closes.
-        const needsAttention = item.userId !== null && item.density === null && !item.isHygroscopic;
+        const needsAttention =
+          item.userId !== null && item.density === null && !item.isHygroscopic && !item.attentionDismissed;
 
         return (
           <>
@@ -171,7 +172,18 @@ export function MaterialsList() {
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden="true" />
                   <span>
                     <span className="font-medium">{t("settings.materials.needsAttention")}</span>{" "}
-                    {t("settings.materials.needsAttentionExplanation")}
+                    {t("settings.materials.needsAttentionExplanation")}{" "}
+                    {/* A material can genuinely have no published density and
+                        genuinely not be hygroscopic, and that is indistinguishable
+                        from one nobody has looked at - so without this the prompt
+                        stays on the row forever. */}
+                    <button
+                      type="button"
+                      className="underline underline-offset-2 hover:no-underline"
+                      onClick={() => updateMutation.mutate({ id: item.id, attentionDismissed: true })}
+                    >
+                      {t("settings.materials.dismissAttention")}
+                    </button>
                   </span>
                 </p>
               )}

@@ -290,6 +290,12 @@ export const materials = table("materials", {
   sortOrder: t.int("sort_order").default(999),
   density: t.numeric("density"), // g/cm^3; lets weight<->length conversions work without an external lookup
   isHygroscopic: t.bool("is_hygroscopic").default(false), // drives the drying-reminder email check
+  // Set by the owner to silence the "needs attention" prompt the client shows
+  // on a Personal Catalog row with no density and no hygroscopic flag. Without
+  // it, a material that genuinely has neither is indistinguishable from one
+  // auto-registration created and nobody ever looked at, so the prompt would
+  // stay on that row forever with nothing the owner could do about it.
+  attentionDismissed: t.bool("attention_dismissed").default(false).notNull(),
   createdAt: t.timestamptz("created_at").defaultNow().notNull()
 }, (table) => [
   foreignKey({
@@ -346,6 +352,9 @@ export const insertMaterialSchema = createInsertSchema(materials).omit({
   // Direct creation always targets the Global Catalog; a Personal Catalog entry
   // is only ever auto-registered from a declared material (see storage.ts).
   userId: true,
+  // Only ever set after the fact, by the owner of the row it is prompting - and
+  // a Global Catalog row is never prompted about in the first place.
+  attentionDismissed: true,
 });
 
 export const insertColorSchema = createInsertSchema(colors).omit({
@@ -390,6 +399,7 @@ export type Material = typeof materials.$inferSelect;
 export const updateMaterialSchema = z.object({
   density: z.string().regex(/^\d+(\.\d+)?$/, "Density must be a positive number").nullable().optional(),
   isHygroscopic: z.boolean().nullable().optional(),
+  attentionDismissed: z.boolean().optional(),
 });
 
 export type UpdateMaterial = z.infer<typeof updateMaterialSchema>;

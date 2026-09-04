@@ -347,6 +347,42 @@ describe("PATCH /api/materials/:id/order", () => {
   });
 });
 
+describe("dismissing the needs-attention flag", () => {
+  // A personal row with no density and no hygroscopic flag is flagged so the
+  // owner knows auto-registration happened. But a material that genuinely has
+  // neither is indistinguishable from one never looked at, so the flag has to
+  // be dismissible or it stays on forever with nothing the owner can do.
+  it("lets the owner dismiss it, and says so in the listing", async () => {
+    const alice = await newUser("alice");
+    const [row] = await db.insert(materials).values({ userId: alice.id, name: "MoonPLA" }).returning();
+
+    const before = await request(app).get("/api/materials").set("Cookie", alice.cookie);
+    expect(before.body[0].attentionDismissed).toBe(false);
+
+    const res = await request(app)
+      .put(`/api/materials/${row.id}`)
+      .set("Cookie", alice.cookie)
+      .send({ attentionDismissed: true });
+
+    expect(res.status).toBe(200);
+    const after = await request(app).get("/api/materials").set("Cookie", alice.cookie);
+    expect(after.body[0].attentionDismissed).toBe(true);
+  });
+
+  it("refuses a non-admin dismissing it on another user's row", async () => {
+    const alice = await newUser("alice");
+    const bob = await newUser("bob");
+    const [row] = await db.insert(materials).values({ userId: bob.id, name: "MoonPLA" }).returning();
+
+    const res = await request(app)
+      .put(`/api/materials/${row.id}`)
+      .set("Cookie", alice.cookie)
+      .send({ attentionDismissed: true });
+
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("the non-scoped entities go through the same factory unchanged", () => {
   it("lets any authenticated user list manufacturers", async () => {
     await storage.createManufacturer({ name: "Bambu Lab" });

@@ -360,7 +360,7 @@ export interface IStorage {
   createMaterial(material: InsertMaterial): Promise<Material>;
   deleteMaterial(id: number): Promise<boolean>;
   updateMaterialOrder(id: number, newOrder: number): Promise<Material | undefined>;
-  /** Fills in density/isHygroscopic on an existing row - see UpdateMaterial. */
+  /** Fills in the after-the-fact fields on an existing row - see UpdateMaterial. */
   updateMaterial(id: number, fields: UpdateMaterial): Promise<Material | undefined>;
 
   // Color operations
