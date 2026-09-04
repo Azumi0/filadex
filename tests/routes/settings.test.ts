@@ -59,6 +59,27 @@ describe("GET /api/materials", () => {
     expect(res.status).toBe(200);
     expect(names(res.body)).toEqual(["AliceOnly", "PLA"]);
   });
+
+  // The client tells the three cases apart from these facts alone (no status
+  // enum): userId null is the Global Catalog; userId set with density/
+  // isHygroscopic still at the auto-registration defaults needs attention;
+  // userId set with either filled in does not. See
+  // docs/plans/per-user-material-catalog-ui.md, Commit 1.
+  it("returns userId, density and isHygroscopic so the client can tell a global row from a filled-in or still-default personal one", async () => {
+    const alice = await newUser("alice");
+    await storage.createMaterial({ name: "PLA", density: "1.24", isHygroscopic: false });
+    await db.insert(materials).values([
+      { userId: alice.id, name: "Filled", density: "1.27", isHygroscopic: true },
+      { userId: alice.id, name: "StillDefault", density: null, isHygroscopic: false },
+    ]);
+
+    const res = await request(app).get("/api/materials").set("Cookie", alice.cookie);
+
+    const byName = (name: string) => res.body.find((m: any) => m.name === name);
+    expect(byName("PLA")).toMatchObject({ userId: null, density: "1.24", isHygroscopic: false });
+    expect(byName("Filled")).toMatchObject({ userId: alice.id, density: "1.27", isHygroscopic: true });
+    expect(byName("StillDefault")).toMatchObject({ userId: alice.id, density: null, isHygroscopic: false });
+  });
 });
 
 describe("POST /api/materials", () => {

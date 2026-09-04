@@ -445,7 +445,9 @@ Returns the history of remaining-percentage changes for a filament, most recent 
 
 ### Get All Materials
 
-Returns all materials.
+Returns the Global Catalog (materials belonging to no particular user) plus
+the caller's own Personal Catalog - never another user's. See
+`docs/adr/0003-per-user-material-catalog.md` for what these mean.
 
 - **URL**: `/api/materials`
 - **Method**: `GET`
@@ -458,13 +460,22 @@ Returns all materials.
     {
       "id": "number",
       "name": "string",
-      "density": "string",
+      "userId": "number | null",
+      "density": "string | null",
       "isHygroscopic": "boolean"
     }
   ]
   ```
-  - `density` (g/cm³) is nullable and used to compute an estimated remaining filament length in the UI.
+  - `userId` is `null` for a Global Catalog entry, or the caller's own ID for
+    one of their Personal Catalog entries.
+  - `density` (g/cm³) is nullable and used to compute an estimated remaining
+    filament length in the UI.
   - `isHygroscopic` drives the [drying-reminder email check](#notifications) - set it for moisture-sensitive materials (PETG, Nylon/PA, PVA, ASA, etc.).
+  - There is no separate status field for "needs attention" - a client derives
+    it from the facts above: a Personal Catalog entry (`userId` set) with
+    `density: null` and `isHygroscopic: false` is exactly the state left by
+    auto-registering a declared material that resolved to nothing (see `POST
+    /api/filaments`), and is the row an owner most likely wants to fill in.
 - **Error Responses**:
   - `401 Unauthorized`: Not authenticated
   - `500 Internal Server Error`: Failed to fetch materials
