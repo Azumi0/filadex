@@ -10,7 +10,7 @@
  *             snapshotted, then run through scripts/migrate.ts
  *   fresh     an empty database run through scripts/migrate.ts
  *
- * Four things have to hold, and each is checked rather than assumed:
+ * Five things have to hold, and each is checked rather than assumed:
  *
  *   1. The upgrade preserves every row, exactly. The data snapshot taken before
  *      the upgrade must match the one taken after - column for column, except
@@ -22,6 +22,9 @@
  *   4. The one legacy step that *rewrites* data rather than adding to it - the
  *      filament_types backfill and the column drop that follows it - carries
  *      every spool across with its product identity intact.
+ *   5. Every INTENTIONALLY_DROPPED entry is still true. Each one narrows check 1
+ *      by a column, so an entry that outlives its migration is a blind spot over
+ *      data that is still there.
  *
  * Check 1 deliberately does not cover check 4, and the difference is easy to
  * misread. Its window opens on a database the legacy chain has already been
@@ -54,6 +57,11 @@ const { pushSchema } = require("drizzle-kit/api");
 // pre-upgrade database actually holds, so a column that vanishes without being
 // listed here reads as destroyed data. The check keeps its meaning - "every
 // column that existed still holds its value, unless we said otherwise".
+//
+// Check 5 reads the list the other way round, so that an entry can only ever
+// narrow check 1 for as long as it is true: a column named here that the
+// upgraded database still has is a stale entry, and a stale entry is a column
+// quietly excluded from the row comparison forever.
 const INTENTIONALLY_DROPPED: Record<string, readonly string[]> = {
   filaments: ["created_at", "updated_at"],
 };
@@ -118,6 +126,25 @@ async function snapshotData(pool: pg.Pool, shape: TableShape[]): Promise<string>
     }
   }
   return out.join("\n");
+}
+
+/**
+ * The INTENTIONALLY_DROPPED entries that are no longer true, checked against the
+ * upgraded database. An entry excludes its column from check 1's comparison, so
+ * one that outlives the migration it was written for - reverted, rewritten, or
+ * never landed - turns into a permanent blind spot over a column that still
+ * exists and still holds data.
+ */
+async function staleDropEntries(pool: pg.Pool): Promise<string[]> {
+  const { rows } = await pool.query<{ table_name: string; column_name: string }>(`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'`);
+  const live = new Set(rows.map((r) => `${r.table_name}.${r.column_name}`));
+  return Object.entries(INTENTIONALLY_DROPPED)
+    .flatMap(([table, columns]) => columns.map((column) => `${table}.${column}`))
+    .filter((qualified) => live.has(qualified))
+    .sort();
 }
 
 /**
@@ -288,6 +315,10 @@ try {
   allPassed = check("upgrade preserved every row unchanged", dataBefore === dataAfter,
     dataBefore === dataAfter ? undefined
       : `  data differs; see ${dataBeforePath} and ${dataAfterPath}`) && allPassed;
+
+  const stale = await staleDropEntries(legacy.pool);
+  allPassed = check("every column the upgrade was allowed to drop is gone", stale.length === 0,
+    `  still present, so the INTENTIONALLY_DROPPED entry excludes live data: ${stale.join(", ")}`) && allPassed;
 
   allPassed = check("upgraded schema matches a fresh install", schemaAfter === freshSchema,
     schemaAfter === freshSchema ? undefined : diff(schemaAfter, freshSchema)) && allPassed;
