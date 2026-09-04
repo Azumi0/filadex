@@ -115,4 +115,16 @@ describe("auto-registration of a declared material", () => {
 
     expect(await ownRows(alice.id)).toHaveLength(1);
   });
+
+  // Blank is not a material. The Spool form requires one, but an import or a
+  // direct API call can still leave it empty, and a nameless Catalog Material
+  // in the settings list is worse than none.
+  it("creates nothing when the declared material is blank", async () => {
+    const alice = await newUser("alice");
+
+    await giveSpoolOf(alice.id, "");
+    await giveSpoolOf(alice.id, "   ");
+
+    expect(await ownRows(alice.id)).toHaveLength(0);
+  });
 });

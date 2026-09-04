@@ -197,6 +197,10 @@ const materialInScopeFor = (userId: number) =>
 // at their neutral defaults, and phase 2 makes the row visible to fill in or
 // delete.
 async function ensureDeclaredMaterialResolves(userId: number, declared: string): Promise<void> {
+  // Blank is not a material to register. The Spool form requires one, but an
+  // import or a direct API call can leave it empty, and a nameless Catalog
+  // Material sitting in the owner's settings list helps nobody.
+  if (declared.trim() === "") return;
   if (await storage.resolveMaterial(userId, declared)) return;
 
   // Two concurrent requests declaring the same new material both resolve to
