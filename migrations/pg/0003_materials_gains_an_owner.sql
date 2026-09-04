@@ -10,9 +10,9 @@
 -- constraint nor the new indexes. Refusing - and naming the offending rows - is
 -- correct: guessing which row to keep would silently discard a density or a
 -- hygroscopic flag, and user_sharing.material_id points at one of them.
-ALTER TABLE "materials" DROP CONSTRAINT "materials_name_key";--> statement-breakpoint
-ALTER TABLE "materials" ADD COLUMN "user_id" integer;--> statement-breakpoint
-ALTER TABLE "materials" ADD CONSTRAINT "materials_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+--
+-- It runs before anything is dropped, so refusing leaves the table exactly as
+-- it was without relying on the migration runner's transaction to undo a drop.
 DO $$
 DECLARE conflict text;
 BEGIN
@@ -22,5 +22,8 @@ BEGIN
     RAISE EXCEPTION 'Cannot add case-insensitive material uniqueness: duplicate names exist (%). Merge or rename them, then re-run.', conflict;
   END IF;
 END $$;--> statement-breakpoint
+ALTER TABLE "materials" DROP CONSTRAINT "materials_name_key";--> statement-breakpoint
+ALTER TABLE "materials" ADD COLUMN "user_id" integer;--> statement-breakpoint
+ALTER TABLE "materials" ADD CONSTRAINT "materials_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "materials_global_name_lower_idx" ON "materials" USING btree (lower("name")) WHERE "materials"."user_id" IS NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX "materials_user_name_lower_idx" ON "materials" USING btree (coalesce("user_id", 0),lower("name")) WHERE "materials"."user_id" IS NOT NULL;
