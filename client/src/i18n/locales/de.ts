@@ -88,7 +88,6 @@ const translations = {
     invalidCredentials: 'Ungültiger Benutzername oder Passwort',
     sessionExpired: 'Ihre Sitzung ist abgelaufen, bitte melden Sie sich erneut an',
     forceChangePassword: 'Sie müssen Ihr Passwort ändern, bevor Sie fortfahren können',
-    passwordRequirements: 'Passwort muss mindestens 6 Zeichen lang sein',
     loginDescription: 'Anmelden, um Ihre Filamente zu verwalten',
     usernamePlaceholder: 'Benutzernamen eingeben',
     passwordPlaceholder: 'Passwort eingeben',

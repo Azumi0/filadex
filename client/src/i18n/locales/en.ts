@@ -88,7 +88,6 @@ const translations = {
     invalidCredentials: 'Invalid username or password',
     sessionExpired: 'Your session has expired, please login again',
     forceChangePassword: 'You must change your password before continuing',
-    passwordRequirements: 'Password must be at least 6 characters',
     loginDescription: 'Login to manage your filaments',
     usernamePlaceholder: 'Enter your username',
     passwordPlaceholder: 'Enter your password',
