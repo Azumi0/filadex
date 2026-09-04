@@ -38,7 +38,16 @@ function DensityInput({ value, onSave, ariaLabel }: { value: string | null; onSa
       min="0"
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={async () => {
+      onBlur={async (e) => {
+        // A number input holding something it cannot parse ("1.24e") reports
+        // its value as "", which is indistinguishable from the field having
+        // been cleared - so blurring it would save density: null and wipe a
+        // stored density on the *success* path, with no toast and no undo.
+        // `badInput` is the one signal that tells the two apart.
+        if (e.currentTarget.validity.badInput) {
+          setDraft(value ?? "");
+          return;
+        }
         const trimmed = draft.trim();
         if (trimmed === (value ?? "")) return;
         try {
