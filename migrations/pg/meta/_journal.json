@@ -15,6 +15,13 @@
       "when": 1788388205738,
       "tag": "0001_seed_email_settings_row",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788456426303,
+      "tag": "0002_nifty_joseph",
+      "breakpoints": true
     }
   ]
 }

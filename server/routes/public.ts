@@ -1,5 +1,4 @@
 import type { Express } from "express";
-import { authenticate } from "../auth";
 import { storage } from "../storage";
 import { logger as appLogger } from "../utils/logger";
 import { validateId } from "../utils/validation";
@@ -60,33 +59,6 @@ export function registerPublicRoutes(app: Express): void {
       });
     } catch (error) {
       appLogger.error("Get public filaments error:", error);
-      res.status(500).json({ message: "Server error" });
-    }
-  });
-
-  // User sharing routes
-  app.post("/api/sharing", authenticate, async (req, res) => {
-    try {
-      const { materialId, isPublic } = req.body;
-
-      const { sharing, created } = await storage.upsertUserSharing(
-        req.userId,
-        materialId || null,
-        isPublic,
-      );
-
-      res.status(created ? 201 : 200).json(sharing);
-    } catch (error) {
-      appLogger.error("Error updating sharing:", error);
-      res.status(500).json({ message: "Server error" });
-    }
-  });
-
-  app.get("/api/sharing", authenticate, async (req, res) => {
-    try {
-      res.json(await storage.getUserSharing(req.userId));
-    } catch (error) {
-      appLogger.error("Error fetching sharing:", error);
       res.status(500).json({ message: "Server error" });
     }
   });

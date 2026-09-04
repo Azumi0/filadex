@@ -93,8 +93,6 @@ Test each endpoint group:
 
 #### Public/Sharing Endpoints
 - [ ] `GET /api/public/filaments/:userId` - Get public filaments
-- [ ] `GET /api/sharing` - Get sharing settings
-- [ ] `POST /api/sharing` - Update sharing settings
 
 ### 6. Docker Testing (Optional)
 

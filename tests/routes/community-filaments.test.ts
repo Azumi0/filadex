@@ -97,12 +97,22 @@ describe("searchCommunityFilaments", () => {
     expect(await searchCommunityFilaments("nothing-like-this")).toEqual([]);
   });
 
-  // The wildcards are stripped rather than escaped, so a query made only of
-  // them collapses to an empty pattern and matches everything.
-  it("strips SQL wildcards out of the query", async () => {
-    const results = await searchCommunityFilaments("%_%");
+  // The wildcards are escaped rather than stripped, so a query made only of
+  // them matches literally - nothing here contains a `%` or `_`.
+  it("treats a query of only SQL wildcards as literal text", async () => {
+    expect(await searchCommunityFilaments("%")).toEqual([]);
+    expect(await searchCommunityFilaments("_")).toEqual([]);
+    expect(await searchCommunityFilaments("%_%")).toEqual([]);
+  });
 
-    expect(results.map((r) => r.name).sort()).toEqual(["Basic PLA Jade White", "Prusament PETG Orange"]);
+  it("finds a manufacturer that literally contains a wildcard character", async () => {
+    await seedCache([
+      { manufacturer: "50% Off Filament", material: "PLA", name: "Cheap PLA", colorName: "Grey" },
+      { manufacturer: "under_score Co", material: "PLA", name: "Plain PLA", colorName: "Grey" },
+    ]);
+
+    expect((await searchCommunityFilaments("50%")).map((r) => r.name)).toEqual(["Cheap PLA"]);
+    expect((await searchCommunityFilaments("under_score")).map((r) => r.name)).toEqual(["Plain PLA"]);
   });
 
   it("caps how many rows it returns", async () => {

@@ -117,12 +117,6 @@ export type ThemeChanges = {
   radius?: string;
 };
 
-/** The outcome of upsertUserSharing - `created` decides 201 versus 200. */
-export type UpsertedSharing = {
-  sharing: UserSharing;
-  created: boolean;
-};
-
 /** Per-user settings a user changes about themselves. */
 export type UserPreferences = {
   language?: string;
@@ -284,13 +278,9 @@ export interface IStorage {
   setUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UserSharing>;
   /** Only the settings that actually share something. */
   getPublicUserSharing(userId: number): Promise<UserSharing[]>;
-  /** Updates this user's setting for a material in place, or creates it. */
-  upsertUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UpsertedSharing>;
 
   // Filament operations
   getFilaments(userId: number): Promise<Filament[]>;
-  /** UNUSED - see the note on the implementation, and TODO.md. */
-  getPublicFilamentsWithUser(userId: number, filterFn?: (filament: Filament) => boolean): Promise<{filaments: Filament[], user: {id: number, username: string}}>;
   getFilament(id: number, userId: number): Promise<Filament | undefined>;
   createFilament(filament: InsertFilament): Promise<Filament>;
   updateFilament(id: number, filament: Partial<InsertFilament>, userId: number): Promise<Filament | undefined>;
@@ -624,6 +614,13 @@ export class DatabaseStorage implements IStorage {
   async setUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UserSharing> {
     // A global setting has a NULL material_id, and `material_id = NULL` is never
     // true, so clearing it needs IS NULL.
+    //
+    // There may be more than one row to clear. Nothing stops duplicates at the
+    // schema level, and every release before the one that fixed it left one
+    // behind on each toggle - so an upgraded database arrives with several.
+    // getPublicUserSharing takes any row with is_public, so a stale `true` would
+    // keep a collection public after it was set to private. Deleting every
+    // matching row before inserting the replacement collapses them.
     await db.delete(userSharing).where(and(
       eq(userSharing.userId, userId),
       materialId === null ? isNull(userSharing.materialId) : eq(userSharing.materialId, materialId),
@@ -640,83 +637,11 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(userSharing.userId, userId), eq(userSharing.isPublic, true)));
   }
 
-  async upsertUserSharing(userId: number, materialId: number | null, isPublic: boolean): Promise<UpsertedSharing> {
-    // A global setting has a NULL material_id, and `material_id = NULL` is never
-    // true, so finding it needs IS NULL.
-    //
-    // There may be more than one row here. Nothing stops it at the schema level,
-    // and every release before the one that fixed it left a duplicate behind on
-    // each toggle. Updating only the row that happened to come back first would
-    // leave the others deciding the answer - getPublicUserSharing takes any row
-    // with is_public, so a stale `true` keeps a collection public after it was
-    // set to private. The oldest row wins and the rest go, which is what makes
-    // this endpoint able to clean up the damage rather than only setUserSharing.
-    const duplicates = await db.select().from(userSharing).where(and(
-      eq(userSharing.userId, userId),
-      materialId === null ? isNull(userSharing.materialId) : eq(userSharing.materialId, materialId),
-    )).orderBy(userSharing.id);
-
-    const [existing, ...extra] = duplicates;
-
-    if (existing) {
-      if (extra.length > 0) {
-        await db.delete(userSharing).where(inArray(userSharing.id, extra.map((row) => row.id)));
-      }
-
-      const [updated] = await db.update(userSharing)
-        .set({ isPublic })
-        .where(eq(userSharing.id, existing.id))
-        .returning();
-      return { sharing: updated, created: false };
-    }
-
-    const [created] = await db.insert(userSharing)
-      .values({ userId, materialId, isPublic })
-      .returning();
-    return { sharing: created, created: true };
-  }
-
   // Filament implementations
   async getFilaments(userId: number): Promise<Filament[]> {
     return await db.select(FILAMENT_SELECT_COLUMNS).from(filaments)
       .innerJoin(filamentTypes, eq(filaments.filamentTypeId, filamentTypes.id))
       .where(eq(filaments.userId, userId));
-  }
-
-  // UNUSED. Nothing calls this. routes/public.ts serves the public collection
-  // by composing getUser + getFilaments instead, because it has to answer 404
-  // for a missing user while this throws. Either give it a shape that route can
-  // use, or delete it - as it stands it will drift from the behaviour it
-  // duplicates. See TODO.md, Technical Debt.
-  async getPublicFilamentsWithUser(userId: number, filterFn?: (filament: Filament) => boolean): Promise<{filaments: Filament[], user: {id: number, username: string}}> {
-    // Get user information
-    const [user] = await db.select({
-      id: users.id,
-      username: users.username
-    }).from(users).where(eq(users.id, userId));
-
-    if (!user) {
-      throw new Error(`User with ID ${userId} not found`);
-    }
-
-    logger.debug(`Getting public filaments for user: ${user.username} (ID: ${userId})`);
-
-    // Get filaments
-    const allFilaments = await this.getFilaments(userId);
-
-    // Apply filter if provided
-    const filteredFilaments = filterFn ? allFilaments.filter(filterFn) : allFilaments;
-
-    logger.debug(`Found ${filteredFilaments.length} public filaments for user ${user.username}`);
-
-    // Return filaments with user information
-    return {
-      filaments: filteredFilaments,
-      user: {
-        id: user.id,
-        username: user.username
-      }
-    };
   }
 
   async getFilament(id: number, userId: number): Promise<Filament | undefined> {

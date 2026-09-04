@@ -91,11 +91,6 @@ export const filaments = table("filaments", {
   dryingReminderNotifiedAt: t.timestamp("drying_reminder_notified_at"),
   // Values for this user's customFieldDefinitions, keyed by definition id (as a string)
   customFieldValues: t.json<Record<string, any>>("custom_field_values").default({}),
-  // Written by docker-entrypoint.sh's CREATE TABLE and never read by the
-  // application. Declared so the schema matches the deployed database; see
-  // TODO.md before removing them.
-  createdAt: t.timestamptz("created_at").defaultNow(),
-  updatedAt: t.timestamptz("updated_at").defaultNow(),
 }, (table) => [
   foreignKey({
     name: "filaments_user_id_fkey",
@@ -119,11 +114,6 @@ export const insertUserSchema = createInsertSchema(users).pick({
   temperatureUnit: true,
 });
 
-export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, "Current password is required"),
-  newPassword: z.string().min(6, "Password must be at least 6 characters"),
-});
-
 export const updateThemeSchema = z.object({
   variant: z.string().min(1).optional(),
   primary: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be a hex color like #EA580C").optional(),
@@ -135,6 +125,15 @@ export type UpdateTheme = z.infer<typeof updateThemeSchema>;
 
 // 3-30 chars, letters/numbers/underscore/hyphen only - shared between the
 // registration schema and the /api/auth/check-username validation.
+//
+// The ASCII-only restriction is deliberate, not an oversight - `müller` really
+// cannot be registered here. Usernames are compared case-insensitively for both
+// uniqueness and login, through LOWER() in server/db/predicates.ts, and that
+// comparison agrees with the users_username_lower_idx unique index only while
+// both stay ASCII: LOWER() on non-ASCII depends on the database's collation,
+// which varies across the installs this project supports. Widening the charset
+// would move correctness onto that collation, so it is not a regex change - it
+// is a uniqueness-and-login question that has to be re-answered together.
 export const usernameSchema = z
   .string()
   .min(3, "Username must be at least 3 characters")
@@ -146,6 +145,15 @@ export const usernameSchema = z
 export const passwordSchema = z
   .string({ required_error: "Password is required" })
   .min(8, "Password must be at least 8 characters");
+
+// newPassword uses passwordSchema so changing your password is held to the same
+// length as registering: a user could otherwise register with 8 and immediately
+// downgrade. The rule binds the password being set, not one already stored -
+// short existing passwords keep working at login.
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Current password is required"),
+  newPassword: passwordSchema,
+});
 
 export const registerSchema = z.object({
   username: usernameSchema,
@@ -202,7 +210,7 @@ export const forgotPasswordSchema = z.object({
 
 export const resetPasswordSchema = z.object({
   token: z.string().min(1, "Reset token is required"),
-  newPassword: z.string().min(8, "Password must be at least 8 characters"),
+  newPassword: passwordSchema,
 });
 
 export const resendVerificationSchema = z.object({
@@ -234,16 +242,11 @@ type FilamentTypeInsertFields = {
   printTemp?: string | null;
 };
 
-// createdAt/updatedAt exist on the filaments table but are not part of the
-// API-facing shape: docker-entrypoint.sh creates them and nothing reads them.
-// See TODO.md.
-type UnusedFilamentColumns = "createdAt" | "updatedAt";
-
-export type Filament = Omit<typeof filaments.$inferSelect, "filamentTypeId" | UnusedFilamentColumns> & FilamentTypeSelectFields & {
+export type Filament = Omit<typeof filaments.$inferSelect, "filamentTypeId"> & FilamentTypeSelectFields & {
   filamentTypeId: number;
 };
 
-export type InsertFilament = Omit<typeof filaments.$inferInsert, "id" | "filamentTypeId" | UnusedFilamentColumns> & FilamentTypeInsertFields;
+export type InsertFilament = Omit<typeof filaments.$inferInsert, "id" | "filamentTypeId"> & FilamentTypeInsertFields;
 
 // Bearbeiten Sie das Schema, um sicherzustellen, dass numerische Felder korrekt konvertiert werden
 // Schema für das Einfügen von Filaments ohne Transformation

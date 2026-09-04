@@ -26,10 +26,15 @@ export function eqIgnoreCase(column: AnyPgColumn, value: string): SQL {
 /**
  * Matches when the column contains the value anywhere in it, ignoring case.
  *
- * `%` and `_` are stripped from the value rather than escaped, so a search term
- * cannot widen its own pattern. A term made only of wildcards therefore
- * collapses to an empty pattern, which matches everything.
+ * `%`, `_` and `\` in the value are escaped rather than stripped, so a search
+ * term matches those characters literally and cannot widen its own pattern. A
+ * term made only of wildcards matches only rows that literally contain them.
+ *
+ * The escape character is spelled `E'\\'` rather than `'\'` so it stays a single
+ * backslash whether or not the target database has `standard_conforming_strings`
+ * on - Filadex can be pointed at an operator's own database (docs/adr/0002).
  */
 export function containsIgnoreCase(column: AnyPgColumn, value: string): SQL {
-  return sql`${column} ILIKE ${`%${value.replace(/[%_]/g, "")}%`}`;
+  const escaped = value.replace(/[\\%_]/g, (char) => `\\${char}`);
+  return sql`${column} ILIKE ${`%${escaped}%`} ESCAPE E'\\\\'`;
 }
