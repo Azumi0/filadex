@@ -312,6 +312,7 @@ const translations = {
     title: 'Settings',
     description: 'Manage manufacturers, materials, colors, diameters, and storage locations.',
     reorderError: 'The order could not be updated.',
+    addDuplicateError: 'An entry with that name already exists.',
     requestButton: 'Submit for review',
     catalogRequestNotice: "New entries are reviewed by an admin before they're added to the shared catalog.",
     catalogRequestSubmitted: 'Submitted for review',

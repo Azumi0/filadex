@@ -118,11 +118,35 @@ describe("POST /api/materials", () => {
     expect(res.body.userId).toBeNull();
   });
 
+  // Every install ships PLA/PETG/ABS/TPU, so retyping one in the Add Material
+  // form is the ordinary case, not an edge one. The Global Catalog's uniqueness
+  // is case-insensitive, so the answer has to be the same whatever the case.
+  it("answers 409 rather than erroring when the Global Catalog already holds that name", async () => {
+    await storage.createMaterial({ name: "PETG" });
+
+    const res = await request(app).post("/api/materials").set("Cookie", adminCookie).send({ name: "petg" });
+
+    expect(res.status).toBe(409);
+    expect(await allMaterialRows()).toHaveLength(1);
+  });
+
   it("stores the name the way the catalog matches it, without surrounding whitespace", async () => {
     const res = await request(app).post("/api/materials").set("Cookie", adminCookie).send({ name: " PETG " });
 
     expect(res.status).toBe(201);
     expect(res.body.name).toBe("PETG");
+  });
+
+  // A Personal Catalog row of the same name is a different row, and the two
+  // partial unique indexes let them coexist - so it must not block the create.
+  it("still creates a Global Catalog row when only someone's Personal Catalog holds that name", async () => {
+    const alice = await newUser("alice");
+    await db.insert(materials).values({ userId: alice.id, name: "MoonPLA" });
+
+    const res = await request(app).post("/api/materials").set("Cookie", adminCookie).send({ name: "MoonPLA" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.userId).toBeNull();
   });
 });
 

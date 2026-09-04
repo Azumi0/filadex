@@ -79,6 +79,10 @@ export function registerSettingsRoutes(app: Express): void {
         return { kind: "create", data: { name, density, isHygroscopic } };
       },
     },
+    // The rule a create actually has to satisfy: materials_global_name_lower_idx
+    // plus the trimming storage.createMaterial applies. So a second "petg"
+    // alongside "PETG" is a 409 rather than a unique-violation 500.
+    duplicateOf: (item, data) => equalsIgnoreCase(catalogName(item.name), catalogName(data.name)),
     // Case-insensitive and whitespace-trimmed, to agree with how a declared
     // material resolves to a Catalog Material (storage.resolveMaterial).
     isInUse: (filament: Filament, item) =>

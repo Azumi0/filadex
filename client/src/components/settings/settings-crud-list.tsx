@@ -159,8 +159,12 @@ export function SettingsCrudList<T extends { id: number }, FormValues extends Re
         toast({ title: t("settings.catalogRequestSubmitted"), description: t("settings.catalogRequestSubmittedDescription") });
       }
     },
-    onError: () => {
-      toast({ title: t("common.error"), description: label("addError"), variant: "destructive" });
+    onError: (error: { status?: number }) => {
+      // 409 is the one failure the admin can act on themselves - the catalog
+      // already holds that name, and every install ships a seeded handful - so
+      // it says that rather than the generic "could not be added".
+      const description = error?.status === 409 ? t("settings.addDuplicateError") : label("addError");
+      toast({ title: t("common.error"), description, variant: "destructive" });
     },
   });
 

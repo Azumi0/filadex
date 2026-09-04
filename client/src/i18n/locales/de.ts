@@ -293,6 +293,7 @@ const translations = {
     title: 'Einstellungen',
     description: 'Hier können Sie die Listen für Hersteller, Materialien, Farben, Durchmesser und Lagerorte verwalten.',
     reorderError: 'Die Reihenfolge konnte nicht aktualisiert werden.',
+    addDuplicateError: 'Ein Eintrag mit diesem Namen existiert bereits.',
     requestButton: 'Zur Prüfung einreichen',
     catalogRequestNotice: 'Neue Einträge werden von einem Admin geprüft, bevor sie zum gemeinsamen Katalog hinzugefügt werden.',
     catalogRequestSubmitted: 'Zur Prüfung eingereicht',

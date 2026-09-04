@@ -524,6 +524,10 @@ Creates a new material (admin only; non-admins should use the catalog request fl
 - **Error Responses**:
   - `400 Bad Request`: Validation error
   - `401 Unauthorized`: Not authenticated
+  - `409 Conflict`: The Global Catalog already holds a material of that name.
+    Names are compared case-insensitively and ignoring surrounding whitespace,
+    so `petg` conflicts with `PETG`. A Personal Catalog entry of the same name
+    does not conflict - the two catalogs are separate.
   - `500 Internal Server Error`: Failed to create material
 
 ### Delete Material

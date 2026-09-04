@@ -65,6 +65,14 @@ export interface CrudEntityConfig<T extends { id: number; userId?: number | null
   };
   /** Whether a given filament is using this settings item (blocks delete) */
   isInUse: (filament: Filament, item: T) => boolean;
+  /**
+   * Whether an existing row already holds what a create is asking for, so POST
+   * can answer 409 instead of letting the database's unique index surface as a
+   * 500. Only `materials` sets this, because it is the only entity whose
+   * uniqueness is case-insensitive - the others' indexes are case-sensitive, so
+   * adding the check there would newly reject creates that succeed today.
+   */
+  duplicateOf?: (item: T, data: InsertT) => boolean;
 }
 
 // Ownership rule for a userScoped entity: a Personal Catalog row (`userId`
@@ -80,7 +88,7 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
   app: Express,
   config: CrudEntityConfig<T, InsertT>
 ): void {
-  const { entityName, basePath, csvFilename, insertSchema, update, storage: entityStorage, csv, isInUse, userScoped } = config;
+  const { entityName, basePath, csvFilename, insertSchema, update, storage: entityStorage, csv, isInUse, userScoped, duplicateOf } = config;
   const label = entityName.charAt(0).toUpperCase() + entityName.slice(1);
 
   app.get(basePath, authenticate, async (req, res) => {
@@ -101,6 +109,14 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
     }
   });
 
+  // The rows a create could collide with. Creation writes Global Catalog rows,
+  // so it dedupes against those only - a Personal Catalog entry (userId set)
+  // with the same name is a different row, and the two partial unique indexes
+  // let them coexist. The Global Catalog is in scope for every caller, so
+  // listing as the caller and dropping the owned rows yields exactly it.
+  const creatableRowsFor = async (userId: number) =>
+    (await entityStorage.getAll(userId)).filter((item) => !userScoped || item.userId === null);
+
   // Direct create/import is admin-only: the shared catalog stays global, and
   // non-admins can only propose additions via POST /api/catalog-requests for
   // an admin to approve (see settings-crud-list.tsx on the client). This holds
@@ -114,12 +130,7 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
         const results = { created: 0, duplicates: 0, errors: 0 };
         const csvLines: string[] = req.body.csvData.split("\n");
         const startIndex = csvLines[0] && csv.isHeaderRow(csvLines[0]) ? 1 : 0;
-        // Import writes Global Catalog rows, so it dedupes against those only -
-        // a Personal Catalog entry (userId set) with the same name is a
-        // different row. The Global Catalog is in scope for every caller, so
-        // listing as the caller and dropping the owned rows yields exactly it.
-        const existing = (await entityStorage.getAll(req.userId))
-          .filter((item) => !userScoped || item.userId === null);
+        const existing = await creatableRowsFor(req.userId);
 
         for (let i = startIndex; i < csvLines.length; i++) {
           const line = csvLines[i].trim();
@@ -151,6 +162,18 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
       }
 
       const validatedData = insertSchema.parse(req.body);
+
+      // The same duplicate check the CSV branch gets from csv.parseLine. Every
+      // install is seeded with a handful of rows, so retyping one in the Add
+      // form is the ordinary case - and without this it reaches the unique
+      // index and comes back as a bare 500.
+      if (duplicateOf) {
+        const existing = await creatableRowsFor(req.userId);
+        if (existing.some((item) => duplicateOf(item, validatedData))) {
+          return res.status(409).json({ message: `${label} already exists` });
+        }
+      }
+
       const created = await entityStorage.create(validatedData);
       res.status(201).json(created);
     } catch (error) {
