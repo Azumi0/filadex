@@ -69,6 +69,14 @@ uniqueness must agree with it, both go through `eqIgnoreCase` in
 `server/db/predicates.ts` rather than spelling out caseless comparison a third
 time.
 
+**Surrounding whitespace is not part of a material's name.** Resolution trims
+before it compares (`catalogName` in `server/utils/materials.ts`), because the
+indexes cannot help here: `lower(' PETG')` genuinely differs from `lower('PETG')`,
+so without trimming a trailing space out of a CSV column would register a second
+Personal Catalog row that looks identical to the first and silently loses the
+curated density and hygroscopic flag - the exact failure this ADR exists to
+eliminate.
+
 **Promotion is not built.** A user cannot yet ask for their Personal Catalog
 Material to be moved into the Global Catalog; the existing Catalog Request flow
 still works and is unchanged, so the path is open, just manual. Worth revisiting

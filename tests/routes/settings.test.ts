@@ -117,6 +117,13 @@ describe("POST /api/materials", () => {
     expect(res.status).toBe(201);
     expect(res.body.userId).toBeNull();
   });
+
+  it("stores the name the way the catalog matches it, without surrounding whitespace", async () => {
+    const res = await request(app).post("/api/materials").set("Cookie", adminCookie).send({ name: " PETG " });
+
+    expect(res.status).toBe(201);
+    expect(res.body.name).toBe("PETG");
+  });
 });
 
 describe("DELETE /api/materials/:id", () => {

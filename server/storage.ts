@@ -21,6 +21,7 @@ import { db } from "./db";
 import { eq, sql, and, or, inArray, desc, isNull, count } from "drizzle-orm";
 import { logger } from "./utils/logger";
 import { containsIgnoreCase, eqIgnoreCase } from "./db/predicates";
+import { catalogName } from "./utils/materials";
 
 /** What the authentication middleware needs to authorize a request. */
 export type AuthContext = {
@@ -197,17 +198,21 @@ const materialInScopeFor = (userId: number) =>
 // at their neutral defaults, and phase 2 makes the row visible to fill in or
 // delete.
 async function ensureDeclaredMaterialResolves(userId: number, declared: string): Promise<void> {
+  // Stored the way the catalog matches it, so ` PETG` and `PETG ` register one
+  // row rather than two that look identical in the settings list.
+  const name = catalogName(declared);
+
   // Blank is not a material to register. The Spool form requires one, but an
   // import or a direct API call can leave it empty, and a nameless Catalog
   // Material sitting in the owner's settings list helps nobody.
-  if (declared.trim() === "") return;
-  if (await storage.resolveMaterial(userId, declared)) return;
+  if (name === "") return;
+  if (await storage.resolveMaterial(userId, name)) return;
 
   // Two concurrent requests declaring the same new material both resolve to
   // nothing and both insert; the partial unique index rejects the second. Let
   // it be a no-op rather than a 500 - the row exists either way afterwards.
   await db.insert(materials)
-    .values({ userId, name: declared, density: null, isHygroscopic: false })
+    .values({ userId, name, density: null, isHygroscopic: false })
     .onConflictDoNothing();
 }
 
@@ -910,7 +915,7 @@ export class DatabaseStorage implements IStorage {
 
   async resolveMaterial(userId: number, declared: string): Promise<Material | undefined> {
     const [row] = await db.select().from(materials)
-      .where(and(eqIgnoreCase(materials.name, declared), materialInScopeFor(userId)))
+      .where(and(eqIgnoreCase(materials.name, catalogName(declared)), materialInScopeFor(userId)))
       // The user's own Personal Catalog row wins when a Global one also matches.
       .orderBy(sql`${materials.userId} IS NULL`)
       .limit(1);
@@ -920,7 +925,12 @@ export class DatabaseStorage implements IStorage {
   async createMaterial(insertMaterial: InsertMaterial): Promise<Material> {
     const [material] = await db
       .insert(materials)
-      .values(insertMaterial)
+      // Stored the way the catalog matches it, the same as an auto-registered
+      // row. A Global Catalog row named " PETG" would be one nothing resolves
+      // to: resolveMaterial compares against the trimmed declared material.
+      // This is the seam every create goes through - the Add form, CSV import
+      // and Catalog Request approval alike.
+      .values({ ...insertMaterial, name: catalogName(insertMaterial.name) })
       .returning();
     return material;
   }

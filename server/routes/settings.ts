@@ -17,6 +17,7 @@ import {
 import { parseCSVLine, escapeCsvField } from "../utils/csv-parser";
 import { registerCrudSettingsRoutes, simpleNameParseLine } from "../utils/settings-crud";
 import { equalsIgnoreCase } from "../db/predicates";
+import { catalogName } from "../utils/materials";
 
 export function registerSettingsRoutes(app: Express): void {
   registerCrudSettingsRoutes<Manufacturer, { name: string }>(app, {
@@ -78,9 +79,10 @@ export function registerSettingsRoutes(app: Express): void {
         return { kind: "create", data: { name, density, isHygroscopic } };
       },
     },
-    // Case-insensitive, to agree with how a declared material resolves to a
-    // Catalog Material (storage.resolveMaterial).
-    isInUse: (filament: Filament, item) => equalsIgnoreCase(filament.material, item.name),
+    // Case-insensitive and whitespace-trimmed, to agree with how a declared
+    // material resolves to a Catalog Material (storage.resolveMaterial).
+    isInUse: (filament: Filament, item) =>
+      equalsIgnoreCase(catalogName(filament.material), catalogName(item.name)),
   });
 
   registerCrudSettingsRoutes<Color, { name: string; code: string }>(app, {

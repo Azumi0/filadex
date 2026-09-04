@@ -107,6 +107,30 @@ describe("auto-registration of a declared material", () => {
     expect(resolved?.userId).toBe(alice.id);
   });
 
+  // A trailing space out of a CSV column or a paste is enough to make a
+  // declared material miss the curated row it obviously means, and the miss is
+  // silent: the spool loses the density and the hygroscopic flag, and the
+  // owner's settings list fills with rows that look identical.
+  it("resolves to the Global Catalog row, creating nothing, when the declared material is padded with whitespace", async () => {
+    const alice = await newUser("alice");
+    await storage.createMaterial({ name: "PETG", density: "1.27", isHygroscopic: true });
+
+    await giveSpoolOf(alice.id, " PETG");
+
+    expect(await ownRows(alice.id)).toHaveLength(0);
+    expect((await storage.resolveMaterial(alice.id, " PETG"))?.density).toBe("1.27");
+  });
+
+  it("registers one row for a new material however it is padded", async () => {
+    const alice = await newUser("alice");
+
+    await giveSpoolOf(alice.id, "MoonPLA");
+    await giveSpoolOf(alice.id, " MoonPLA ");
+    await giveSpoolOf(alice.id, "MoonPLA ");
+
+    expect((await ownRows(alice.id)).map((row) => row.name)).toEqual(["MoonPLA"]);
+  });
+
   it("creates nothing when the material is already in the user's Personal Catalog", async () => {
     const alice = await newUser("alice");
 
