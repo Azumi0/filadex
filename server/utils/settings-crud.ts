@@ -46,15 +46,17 @@ export interface CrudEntityConfig<T extends { id: number; userId?: number | null
     create: (data: InsertT) => Promise<T>;
     delete: (id: number) => Promise<boolean>;
     updateOrder?: (id: number, newOrder: number) => Promise<T | undefined>;
-    /**
-     * Optional PUT /:id capability for filling in fields on a row that
-     * already exists (distinct from `create`, which always makes a new one).
-     * Only `materials` sets this - see `updateSchema`.
-     */
-    update?: (id: number, data: Partial<InsertT>) => Promise<T | undefined>;
   };
-  /** Validates the PUT body; required together with `storage.update`. */
-  updateSchema?: ZodType<Partial<InsertT>>;
+  /**
+   * Optional PUT /:id capability for filling in fields on a row that already
+   * exists (distinct from `storage.create`, which always makes a new one).
+   * The body schema and the write are one property because neither is any use
+   * without the other. Only `materials` sets this.
+   */
+  update?: {
+    schema: ZodType<Partial<InsertT>>;
+    apply: (id: number, data: Partial<InsertT>) => Promise<T | undefined>;
+  };
   csv: {
     exportHeader: string;
     exportRow: (item: T) => string;
@@ -78,7 +80,7 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
   app: Express,
   config: CrudEntityConfig<T, InsertT>
 ): void {
-  const { entityName, basePath, csvFilename, insertSchema, updateSchema, storage: entityStorage, csv, isInUse, userScoped } = config;
+  const { entityName, basePath, csvFilename, insertSchema, update, storage: entityStorage, csv, isInUse, userScoped } = config;
   const label = entityName.charAt(0).toUpperCase() + entityName.slice(1);
 
   app.get(basePath, authenticate, async (req, res) => {
@@ -160,10 +162,10 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
     }
   });
 
-  // A userScoped entity can't gate DELETE on isAdmin alone: a user may remove a
-  // row they own. The ownership check is done per row below instead.
-  const deleteGuards = userScoped ? [authenticate] : [authenticate, isAdmin];
-  app.delete(`${basePath}/:id`, ...deleteGuards, async (req, res) => {
+  // A userScoped entity can't gate DELETE and PUT on isAdmin alone: a user may
+  // act on a row they own. The ownership check is done per row below instead.
+  const ownerOrAdminGuards = userScoped ? [authenticate] : [authenticate, isAdmin];
+  app.delete(`${basePath}/:id`, ...ownerOrAdminGuards, async (req, res) => {
     try {
       const id = validateId(req.params.id);
       if (id === null) {
@@ -200,19 +202,8 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
     }
   });
 
-  const update = entityStorage.update;
   if (update) {
-    if (!updateSchema) {
-      // Both are independently optional in the type, but one without the
-      // other is a config mistake, not a runtime state to degrade for - fail
-      // at startup rather than 500 on the first request.
-      throw new Error(`registerCrudSettingsRoutes(${entityName}): storage.update requires updateSchema`);
-    }
-
-    // Same admin-or-owner rule as DELETE. A non-userScoped entity that ever
-    // sets `update` would be admin-only throughout, same as DELETE's guard.
-    const updateGuards = userScoped ? [authenticate] : [authenticate, isAdmin];
-    app.put(`${basePath}/:id`, ...updateGuards, async (req, res) => {
+    app.put(`${basePath}/:id`, ...ownerOrAdminGuards, async (req, res) => {
       try {
         const id = validateId(req.params.id);
         if (id === null) {
@@ -229,12 +220,12 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
           return res.status(403).json({ message: `Cannot edit a ${entityName} you do not own` });
         }
 
-        const validatedData = updateSchema.parse(req.body);
+        const validatedData = update.schema.parse(req.body);
         if (Object.keys(validatedData as object).length === 0) {
           return res.status(400).json({ message: "No fields to update" });
         }
 
-        const updated = await update(id, validatedData);
+        const updated = await update.apply(id, validatedData);
         if (!updated) {
           return res.status(404).json({ message: `${label} not found` });
         }
