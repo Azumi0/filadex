@@ -10,7 +10,8 @@
  * Resolution proper - case-insensitive, Personal Catalog before Global, and
  * guaranteeing the row exists - lives in `storage.resolveMaterial`, because it
  * needs the database. What is left here is the name-set predicate for callers
- * that have already loaded a set of catalog names (`server/routes/public.ts`).
+ * that have already loaded a set of catalog names: `server/routes/public.ts`
+ * and the drying-reminder check in `server/utils/notification-checks.ts`.
  */
 
 /**
