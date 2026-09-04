@@ -79,9 +79,14 @@ export interface CrudEntityConfig<T extends { id: number; userId?: number | null
 // set) may be acted on by the user who owns it; a Global Catalog row
 // (`userId` null) only by an admin. Shared by DELETE and PUT so the rule
 // lives in one place.
-function ownsOrIsAdmin(item: { userId?: number | null }, callerId: number | undefined, callerIsAdmin: boolean): boolean {
+//
+// Admin is read off `role`, not the `is_admin` mirror: shared/schema.ts names
+// role the source of truth, every other gate in the codebase is
+// requireRole("admin"), and a user where the two disagree would otherwise get
+// edit and delete rights over the Global Catalog.
+function ownsOrIsAdmin(item: { userId?: number | null }, caller: Express.Request["user"], callerId: number | undefined): boolean {
   const ownsIt = item.userId !== null && item.userId !== undefined && item.userId === callerId;
-  return ownsIt || callerIsAdmin;
+  return ownsIt || caller?.role === "admin";
 }
 
 export function registerCrudSettingsRoutes<T extends { id: number; userId?: number | null }, InsertT>(
@@ -203,7 +208,7 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
         return res.status(404).json({ message: `${label} not found` });
       }
 
-      if (userScoped && !ownsOrIsAdmin(item, req.userId, !!req.user?.isAdmin)) {
+      if (userScoped && !ownsOrIsAdmin(item, req.user, req.userId)) {
         return res.status(403).json({ message: `Cannot delete a ${entityName} you do not own` });
       }
 
@@ -240,7 +245,7 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
           return res.status(404).json({ message: `${label} not found` });
         }
 
-        if (userScoped && !ownsOrIsAdmin(item, req.userId, !!req.user?.isAdmin)) {
+        if (userScoped && !ownsOrIsAdmin(item, req.user, req.userId)) {
           return res.status(403).json({ message: `Cannot edit a ${entityName} you do not own` });
         }
 

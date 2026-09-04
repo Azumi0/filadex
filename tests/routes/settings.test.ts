@@ -9,13 +9,14 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
+import { eq } from "drizzle-orm";
 import type { Express } from "express";
 import { registerAuthRoutes } from "../../server/routes/auth";
 import { registerSettingsRoutes } from "../../server/routes/settings";
 import { initializeAdminUser } from "../../server/auth";
 import { storage } from "../../server/storage";
 import { db } from "../helpers/db";
-import { materials } from "../../shared/schema";
+import { materials, users } from "../../shared/schema";
 import { createApp, loginAs, registerAndVerify } from "../helpers/app";
 
 let app: Express;
@@ -292,6 +293,26 @@ describe("PUT /api/materials/:id", () => {
       .send({ density: "not-a-number" });
 
     expect(res.status).toBe(400);
+  });
+});
+
+describe("ownership is decided by role, not the is_admin mirror", () => {
+  // shared/schema.ts documents `role` as the source of truth and `is_admin` as
+  // a backward-compatibility mirror. This is the only authorization decision in
+  // the codebase that read the mirror; every other gate is requireRole("admin").
+  it("refuses a user whose is_admin mirror says admin but whose role does not", async () => {
+    const global = await storage.createMaterial({ name: "PLA" });
+    const alice = await newUser("alice");
+    await db.update(users).set({ isAdmin: true }).where(eq(users.id, alice.id));
+
+    const put = await request(app)
+      .put(`/api/materials/${global.id}`)
+      .set("Cookie", alice.cookie)
+      .send({ density: "1.24" });
+    const del = await request(app).delete(`/api/materials/${global.id}`).set("Cookie", alice.cookie);
+
+    expect(put.status).toBe(403);
+    expect(del.status).toBe(403);
   });
 });
 
