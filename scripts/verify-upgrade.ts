@@ -13,7 +13,8 @@
  * Four things have to hold, and each is checked rather than assumed:
  *
  *   1. The upgrade preserves every row, exactly. The data snapshot taken before
- *      the upgrade must match the one taken after.
+ *      the upgrade must match the one taken after - column for column, except
+ *      for columns a migration deliberately drops (INTENTIONALLY_DROPPED).
  *   2. An upgraded database ends up with the same schema as a fresh one -
  *      otherwise the two diverge and a later migration works on one but not the
  *      other.
@@ -42,36 +43,73 @@ import { join } from "node:path";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { getTableColumns, getTableName, is } from "drizzle-orm";
-import { PgTable } from "drizzle-orm/pg-core";
 import { buildLegacyDatabase, describeSchema } from "./legacy-db";
 import * as schema from "../shared/schema";
 
 const require = createRequire(import.meta.url);
 const { pushSchema } = require("drizzle-kit/api");
 
-// Derived from the schema rather than listed, so a table added by a later
-// migration cannot quietly fall outside the row comparison while it still
-// reports that every row was preserved. The columns come from the schema for
-// the same reason, in the other direction: a column the schema no longer
-// describes - one a migration under test drops - is not part of "every row
-// preserved", but every column that stays is compared, value for value.
-const TABLES = Object.values(schema)
-  .filter((value) => is(value, PgTable))
-  .map((value) => {
-    const table = value as PgTable;
-    return {
-      name: getTableName(table),
-      columns: Object.values(getTableColumns(table)).map((column) => column.name),
-    };
-  })
-  .sort((a, b) => a.name.localeCompare(b.name));
+// Columns a migration under test drops on purpose. Naming one here is the only
+// way a DROP COLUMN passes check 1: the snapshot reads the columns the
+// pre-upgrade database actually holds, so a column that vanishes without being
+// listed here reads as destroyed data. The check keeps its meaning - "every
+// column that existed still holds its value, unless we said otherwise".
+const INTENTIONALLY_DROPPED: Record<string, readonly string[]> = {
+  filaments: ["created_at", "updated_at"],
+};
 
-/** Every row of every table, ordered, as diffable text. */
-async function snapshotData(pool: pg.Pool): Promise<string> {
+type TableShape = { name: string; columns: string[] };
+
+/**
+ * The tables and columns a database has right now, as the row snapshot will
+ * read them. Taken against the pre-upgrade database and then reused for the
+ * after-snapshot, so the comparison is "every row the upgrade started with, one
+ * column at a time": a column a migration adds is absent here and so is never
+ * compared, and a column a migration drops must be in INTENTIONALLY_DROPPED or
+ * check 1 fails.
+ *
+ * A migration that drops a whole table is not handled here - the after-snapshot
+ * throws rather than failing cleanly - because nothing in play does that.
+ */
+async function discoverShape(pool: pg.Pool): Promise<TableShape[]> {
+  const { rows } = await pool.query<{ table_name: string; column_name: string }>(`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+    ORDER BY table_name, ordinal_position`);
+  const byTable = new Map<string, string[]>();
+  for (const { table_name, column_name } of rows) {
+    if ((INTENTIONALLY_DROPPED[table_name] ?? []).includes(column_name)) continue;
+    let columns = byTable.get(table_name);
+    if (!columns) byTable.set(table_name, (columns = []));
+    columns.push(column_name);
+  }
+  return [...byTable]
+    .map(([name, columns]) => ({ name, columns }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Every row of every table in `shape`, ordered, as diffable text.
+ *
+ * `shape` is the pre-upgrade shape; a column in it that the database no longer
+ * has is one the upgrade dropped without an INTENTIONALLY_DROPPED entry. That is
+ * written into the snapshot as a line rather than SELECTed - so check 1 fails
+ * with the column named, instead of this throwing on a missing column.
+ */
+async function snapshotData(pool: pg.Pool, shape: TableShape[]): Promise<string> {
+  const live = await discoverShape(pool);
+  const present = new Map(live.map((table) => [table.name, new Set(table.columns)]));
+
   const out: string[] = [];
-  for (const table of TABLES) {
-    const selection = table.columns.map((column) => `"${column}"`).join(", ");
+  for (const table of shape) {
+    const has = present.get(table.name) ?? new Set<string>();
+    const missing = table.columns.filter((column) => !has.has(column));
+    if (missing.length > 0) {
+      out.push(`-- ${table.name}: dropped without an INTENTIONALLY_DROPPED entry: ${missing.join(", ")}`);
+    }
+    const usable = table.columns.filter((column) => has.has(column));
+    const selection = usable.length > 0 ? usable.map((column) => `"${column}"`).join(", ") : "1";
     const { rows } = await pool.query(`SELECT ${selection} FROM "${table.name}" ORDER BY 1`);
     out.push(`-- ${table.name} (${rows.length} rows)`);
     for (const row of rows) {
@@ -218,7 +256,10 @@ try {
   console.log("Seeding it...");
   run("scripts/seed-demo-data.ts", legacy.url, "seed");
 
-  const dataBefore = await snapshotData(legacy.pool);
+  // Discovered from the database as it is now, before scripts/migrate.ts runs,
+  // and reused for every snapshot below.
+  const shape = await discoverShape(legacy.pool);
+  const dataBefore = await snapshotData(legacy.pool, shape);
   writeFileSync(dataBeforePath, dataBefore);
   // Not compared against anything - a later migration is allowed to change the
   // schema. It is written out because when one of the schema checks below
@@ -230,7 +271,7 @@ try {
   const output = run("scripts/migrate.ts", legacy.url, "migrate");
   console.log(output.split("\n").filter((l) => l && !l.startsWith("  legacy:")).map((l) => "  " + l).join("\n"));
 
-  const dataAfter = await snapshotData(legacy.pool);
+  const dataAfter = await snapshotData(legacy.pool, shape);
   const schemaAfter = await describeSchema(legacy.pool);
   writeFileSync(dataAfterPath, dataAfter);
 
@@ -264,7 +305,7 @@ try {
   // Re-running must be a no-op, since the entrypoint runs it on every start -
   // in the schema as well as in the data.
   run("scripts/migrate.ts", legacy.url, "migrate (again)");
-  const dataAfterSecondRun = await snapshotData(legacy.pool);
+  const dataAfterSecondRun = await snapshotData(legacy.pool, shape);
   const schemaAfterSecondRun = await describeSchema(legacy.pool);
   allPassed = check("running the migration again changes no row", dataAfter === dataAfterSecondRun) && allPassed;
   allPassed = check("running the migration again changes no schema", schemaAfter === schemaAfterSecondRun,
