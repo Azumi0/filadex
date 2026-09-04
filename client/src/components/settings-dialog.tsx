@@ -137,7 +137,7 @@ export function SettingsDialog({ open, onOpenChange, initialTab }: SettingsDialo
           </TabsContent>
 
           <TabsContent value="notifications">
-            <NotificationsSettings />
+            <NotificationsSettings onManageMaterials={() => setActiveTab("materials")} />
           </TabsContent>
 
           <TabsContent value="custom-fields">

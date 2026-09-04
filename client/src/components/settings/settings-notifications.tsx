@@ -17,7 +17,12 @@ interface NotificationPreferences {
   dryingReminderDays: number;
 }
 
-export function NotificationsSettings() {
+interface NotificationsSettingsProps {
+  /** Switches the settings dialog to the Materials tab, so the hygroscopic note below can link there. */
+  onManageMaterials?: () => void;
+}
+
+export function NotificationsSettings({ onManageMaterials }: NotificationsSettingsProps = {}) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -115,6 +120,14 @@ export function NotificationsSettings() {
               value={dryingReminderDays}
               onChange={(e) => setDryingReminderDays(Number(e.target.value))}
             />
+            <p className="text-sm text-muted-foreground">
+              {t("settings.notifications.dryingHygroscopicNote")}{" "}
+              {onManageMaterials && (
+                <Button variant="link" className="h-auto p-0 text-sm" onClick={onManageMaterials}>
+                  {t("settings.notifications.dryingHygroscopicLink")}
+                </Button>
+              )}
+            </p>
           </div>
         )}
 

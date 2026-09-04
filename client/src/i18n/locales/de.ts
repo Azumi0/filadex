@@ -384,6 +384,8 @@ const translations = {
       dryingLabel: 'Trocknungserinnerungen',
       dryingDescription: 'Per E-Mail benachrichtigen, wenn eine feuchtigkeitsempfindliche Spule längere Zeit nicht getrocknet wurde',
       dryingDaysLabel: 'Erinnern nach (Tagen)',
+      dryingHygroscopicNote: 'Erinnerungen gelten nur für als hygroskopisch markierte Materialien.',
+      dryingHygroscopicLink: 'Materialien verwalten',
       updated: 'Benachrichtigungseinstellungen aktualisiert',
       updatedDescription: 'Ihre Benachrichtigungseinstellungen wurden erfolgreich gespeichert.',
       updateError: 'Benachrichtigungseinstellungen konnten nicht aktualisiert werden.',

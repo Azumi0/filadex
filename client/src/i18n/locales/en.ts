@@ -403,6 +403,8 @@ const translations = {
       dryingLabel: 'Drying reminders',
       dryingDescription: 'Email me when a moisture-sensitive spool hasn\'t been dried in a while',
       dryingDaysLabel: 'Remind after (days)',
+      dryingHygroscopicNote: 'Reminders only apply to materials marked hygroscopic.',
+      dryingHygroscopicLink: 'Manage materials',
       updated: 'Notification preferences updated',
       updatedDescription: 'Your notification preferences have been saved successfully.',
       updateError: 'Could not update notification preferences.',
