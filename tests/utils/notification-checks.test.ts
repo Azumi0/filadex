@@ -296,4 +296,35 @@ describe("per-user hygroscopy", () => {
     expect(lastMailTo(bob.email!)).toBeUndefined();
     expect(mailbox.some((m) => m.html.includes("Bob Damp"))).toBe(false);
   });
+
+  // A Personal Catalog row and a Global one can hold the same name: the two
+  // partial unique indexes are disjoint by design. `resolveMaterial` is
+  // personal-wins, so the hygroscopy lookup has to be too - otherwise the user
+  // unchecks "hygroscopic" on their own row and the reminders keep coming with
+  // nothing in the UI explaining why.
+  it("lets the user's own row override a Global Catalog row of the same name", async () => {
+    const alice = await storage.getUser(aliceId);
+
+    // Alice declares PLA-CF; auto-registration gives her a blank personal row.
+    await giveSpool(aliceId, { name: "Alice CF", material: "PLA-CF", lastDryingDate: daysAgo(400) });
+    // An admin later approves her Catalog Request, which creates it globally.
+    await storage.createMaterial({ name: "PLA-CF", density: "1.24", isHygroscopic: true });
+
+    await runScheduledChecks();
+
+    expect(mailbox.some((m) => m.html.includes("Alice CF"))).toBe(false);
+  });
+
+  it("still reminds when the user's own row is the hygroscopic one", async () => {
+    const alice = await storage.getUser(aliceId);
+
+    await giveSpool(aliceId, { name: "Alice CF", material: "PLA-CF", lastDryingDate: daysAgo(400) });
+    await storage.createMaterial({ name: "PLA-CF", isHygroscopic: false });
+    await db.update(materials).set({ isHygroscopic: true })
+      .where(and(eq(materials.userId, aliceId), eq(materials.name, "PLA-CF")));
+
+    await runScheduledChecks();
+
+    expect(lastMailTo(alice!.email!)?.html).toContain("Alice CF");
+  });
 });

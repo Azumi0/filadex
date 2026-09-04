@@ -519,9 +519,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getHygroscopicMaterialNames(userId: number): Promise<string[]> {
-    const rows = await db.select({ name: materials.name }).from(materials)
-      .where(and(eq(materials.isHygroscopic, true), materialInScopeFor(userId)));
-    return rows.map((row) => row.name);
+    // Not filtered on is_hygroscopic in SQL: a Personal Catalog row and a Global
+    // one may hold the same name (the two partial unique indexes are disjoint),
+    // and this has to apply the same Personal-before-Global precedence
+    // resolveMaterial does. Filtering first would let the Global row's flag
+    // decide for a name the user's own row owns - so the user unchecks
+    // "hygroscopic" on their own row, keeps getting reminders, and nothing in
+    // the UI explains why.
+    const rows = await db.select({
+      name: materials.name,
+      userId: materials.userId,
+      isHygroscopic: materials.isHygroscopic,
+    }).from(materials).where(materialInScopeFor(userId));
+
+    const winners = new Map<string, { name: string; isHygroscopic: boolean | null }>();
+    for (const row of rows) {
+      const key = catalogName(row.name).toLowerCase();
+      if (row.userId !== null || !winners.has(key)) winners.set(key, row);
+    }
+
+    return [...winners.values()].filter((row) => row.isHygroscopic).map((row) => row.name);
   }
 
   async markLowStockNotified(filamentIds: number[]): Promise<void> {
