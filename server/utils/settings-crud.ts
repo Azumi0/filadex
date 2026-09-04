@@ -284,6 +284,16 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
           return res.status(400).json({ message: "newOrder must be a number" });
         }
 
+        // Resolved through the caller's own list, the way DELETE and PUT are.
+        // Without it this is an unscoped write by id: on a userScoped entity an
+        // admin would rewrite sort_order on a Personal Catalog row that is not
+        // in their list and that they cannot see. For the other entities
+        // getAll ignores the caller and returns everything, so nothing changes.
+        const items = await entityStorage.getAll(req.userId);
+        if (!items.some((i) => i.id === id)) {
+          return res.status(404).json({ message: `${label} not found` });
+        }
+
         const updated = await updateOrder(id, newOrder);
         if (!updated) {
           return res.status(404).json({ message: `${label} not found` });

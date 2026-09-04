@@ -316,6 +316,37 @@ describe("ownership is decided by role, not the is_admin mirror", () => {
   });
 });
 
+describe("PATCH /api/materials/:id/order", () => {
+  it("reorders a Global Catalog row for an admin", async () => {
+    const global = await storage.createMaterial({ name: "PLA" });
+
+    const res = await request(app)
+      .patch(`/api/materials/${global.id}/order`)
+      .set("Cookie", adminCookie)
+      .send({ newOrder: 2 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.sortOrder).toBe(2);
+  });
+
+  // The one materials route that used to write by id alone. A Personal Catalog
+  // row is not in the admin's own list and they cannot see it, so an admin
+  // rewriting its sort_order is an unscoped write on a per-user table.
+  it("does not let an admin reorder a row in someone else's Personal Catalog", async () => {
+    const alice = await newUser("alice");
+    const [row] = await db.insert(materials).values({ userId: alice.id, name: "AliceOnly", sortOrder: 999 }).returning();
+
+    const res = await request(app)
+      .patch(`/api/materials/${row.id}/order`)
+      .set("Cookie", adminCookie)
+      .send({ newOrder: 1 });
+
+    expect(res.status).toBe(404);
+    const [after] = await db.select().from(materials).where(eq(materials.id, row.id));
+    expect(after.sortOrder).toBe(999);
+  });
+});
+
 describe("the non-scoped entities go through the same factory unchanged", () => {
   it("lets any authenticated user list manufacturers", async () => {
     await storage.createManufacturer({ name: "Bambu Lab" });
