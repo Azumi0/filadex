@@ -159,6 +159,92 @@ describe("DELETE /api/materials/:id", () => {
   });
 });
 
+describe("PUT /api/materials/:id", () => {
+  it("lets a non-admin fill in density and isHygroscopic on a row they own", async () => {
+    const alice = await newUser("alice");
+    const [row] = await db.insert(materials).values({ userId: alice.id, name: "AliceOnly" }).returning();
+
+    const res = await request(app)
+      .put(`/api/materials/${row.id}`)
+      .set("Cookie", alice.cookie)
+      .send({ density: "1.24", isHygroscopic: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ density: "1.24", isHygroscopic: true });
+  });
+
+  it("refuses a non-admin editing a Global Catalog row", async () => {
+    const global = await storage.createMaterial({ name: "PLA" });
+    const alice = await newUser("alice");
+
+    const res = await request(app)
+      .put(`/api/materials/${global.id}`)
+      .set("Cookie", alice.cookie)
+      .send({ density: "1.24" });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses a non-admin editing another user's Personal Catalog row", async () => {
+    const alice = await newUser("alice");
+    const bob = await newUser("bob");
+    const [bobRow] = await db.insert(materials).values({ userId: bob.id, name: "BobOnly" }).returning();
+
+    const res = await request(app)
+      .put(`/api/materials/${bobRow.id}`)
+      .set("Cookie", alice.cookie)
+      .send({ density: "1.24" });
+
+    expect(res.status).toBe(404);
+  });
+
+  it("lets an admin edit a Global Catalog row", async () => {
+    const global = await storage.createMaterial({ name: "PLA" });
+
+    const res = await request(app)
+      .put(`/api/materials/${global.id}`)
+      .set("Cookie", adminCookie)
+      .send({ density: "1.24", isHygroscopic: false });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ density: "1.24", isHygroscopic: false });
+  });
+
+  it("accepts just one of the two fields, leaving the other as it was", async () => {
+    const alice = await newUser("alice");
+    const [row] = await db.insert(materials).values({ userId: alice.id, name: "AliceOnly", isHygroscopic: true }).returning();
+
+    const res = await request(app)
+      .put(`/api/materials/${row.id}`)
+      .set("Cookie", alice.cookie)
+      .send({ density: "1.24" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ density: "1.24", isHygroscopic: true });
+  });
+
+  it("rejects an empty body rather than erroring", async () => {
+    const alice = await newUser("alice");
+    const [row] = await db.insert(materials).values({ userId: alice.id, name: "AliceOnly" }).returning();
+
+    const res = await request(app).put(`/api/materials/${row.id}`).set("Cookie", alice.cookie).send({});
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a non-numeric density instead of erroring against the database", async () => {
+    const alice = await newUser("alice");
+    const [row] = await db.insert(materials).values({ userId: alice.id, name: "AliceOnly" }).returning();
+
+    const res = await request(app)
+      .put(`/api/materials/${row.id}`)
+      .set("Cookie", alice.cookie)
+      .send({ density: "not-a-number" });
+
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("the non-scoped entities go through the same factory unchanged", () => {
   it("lets any authenticated user list manufacturers", async () => {
     await storage.createManufacturer({ name: "Bambu Lab" });

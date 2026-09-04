@@ -3,6 +3,7 @@ import { storage } from "../storage";
 import {
   insertManufacturerSchema,
   insertMaterialSchema,
+  updateMaterialSchema,
   insertColorSchema,
   insertDiameterSchema,
   insertStorageLocationSchema,
@@ -43,11 +44,17 @@ export function registerSettingsRoutes(app: Express): void {
     basePath: "/api/materials",
     csvFilename: "materials.csv",
     insertSchema: insertMaterialSchema,
+    // Fills in density/isHygroscopic on a row that already exists - creation
+    // stays admin-only and global (see the POST comment below), but once a
+    // declared material has auto-registered a row, the owner needs a way to
+    // make it actually do something. Same admin-or-owner rule as delete.
+    updateSchema: updateMaterialSchema,
     userScoped: true,
     storage: {
       getAll: (userId) => storage.getMaterials(userId),
       create: (data) => storage.createMaterial(data),
       delete: (id) => storage.deleteMaterial(id),
+      update: (id, data) => storage.updateMaterial(id, data),
       updateOrder: (id, newOrder) => storage.updateMaterialOrder(id, newOrder),
     },
     csv: {

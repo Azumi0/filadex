@@ -542,6 +542,45 @@ Deletes a material.
   - `404 Not Found`: Material not found
   - `500 Internal Server Error`: Failed to delete material
 
+### Update Material
+
+Fills in `density` and/or `isHygroscopic` on a material that already exists.
+There is no way to change `name` or move a row between catalogs here - both
+are fixed at creation.
+
+- **URL**: `/api/materials/:id`
+- **Method**: `PUT`
+- **Authentication**: Required. Sees the same Global-Catalog-plus-own-Personal-
+  Catalog scope as `GET /api/materials` - an admin does not see or edit
+  another user's Personal Catalog entries through this endpoint. Within that
+  scope, a non-admin may edit only a Personal Catalog entry they own; an admin
+  may additionally edit a Global Catalog entry.
+- **URL Parameters**:
+  - `id`: The ID of the material
+- **Request Body** (either or both fields):
+  ```json
+  {
+    "density": "string",
+    "isHygroscopic": "boolean"
+  }
+  ```
+- **Response**: `200 OK`
+  ```json
+  {
+    "id": "number",
+    "name": "string",
+    "userId": "number | null",
+    "density": "string | null",
+    "isHygroscopic": "boolean"
+  }
+  ```
+- **Error Responses**:
+  - `400 Bad Request`: Invalid material ID, or validation error
+  - `401 Unauthorized`: Not authenticated
+  - `403 Forbidden`: Not an admin, and not the owner of this Personal Catalog entry
+  - `404 Not Found`: Material not found (also returned for another user's Personal Catalog entry)
+  - `500 Internal Server Error`: Failed to update material
+
 ## Colors
 
 ### Get All Colors

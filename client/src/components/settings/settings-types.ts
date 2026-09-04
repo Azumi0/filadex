@@ -23,6 +23,8 @@ export interface Manufacturer {
 export interface Material {
   id: number;
   name: string;
+  // null = Global Catalog; set = the owning user's Personal Catalog entry.
+  userId: number | null;
   density: string | null;
   isHygroscopic: boolean | null;
   createdAt: string;

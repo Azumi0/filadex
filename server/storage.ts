@@ -2,7 +2,7 @@ import {
   filaments, type InsertFilament,
   filamentTypes, type Filament,
   manufacturers, type Manufacturer, type InsertManufacturer,
-  materials, type Material, type InsertMaterial,
+  materials, type Material, type InsertMaterial, type UpdateMaterial,
   colors, type Color, type InsertColor,
   diameters, type Diameter, type InsertDiameter,
   storageLocations, type StorageLocation, type InsertStorageLocation,
@@ -351,6 +351,8 @@ export interface IStorage {
   createMaterial(material: InsertMaterial): Promise<Material>;
   deleteMaterial(id: number): Promise<boolean>;
   updateMaterialOrder(id: number, newOrder: number): Promise<Material | undefined>;
+  /** Fills in density/isHygroscopic on an existing row - see UpdateMaterial. */
+  updateMaterial(id: number, fields: UpdateMaterial): Promise<Material | undefined>;
 
   // Color operations
   getColors(): Promise<Color[]>;
@@ -926,6 +928,15 @@ export class DatabaseStorage implements IStorage {
     const [updated] = await db
       .update(materials)
       .set({ sortOrder: newOrder })
+      .where(eq(materials.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async updateMaterial(id: number, fields: UpdateMaterial): Promise<Material | undefined> {
+    const [updated] = await db
+      .update(materials)
+      .set(fields)
       .where(eq(materials.id, id))
       .returning();
     return updated || undefined;

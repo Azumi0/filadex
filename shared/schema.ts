@@ -376,6 +376,24 @@ export type Manufacturer = typeof manufacturers.$inferSelect;
 export type InsertMaterial = z.infer<typeof insertMaterialSchema>;
 export type Material = typeof materials.$inferSelect;
 
+// The only fields an owner (or an admin, on any row) can fill in after the
+// fact - name and scoping are fixed at creation. This is what turns an
+// auto-registered Personal Catalog row into one that actually does something:
+// see docs/adr/0003-per-user-material-catalog.md.
+//
+// Written out directly rather than derived from createInsertSchema: unlike
+// POST /api/materials (admin-only), PUT /api/materials/:id is reachable by any
+// owner of a Personal Catalog row, so density needs an actual format check -
+// createInsertSchema otherwise maps the numeric column to a bare, unrefined
+// string, and an unparseable value would reach Postgres as a raw
+// `UPDATE ... SET density = '...'` and fail as an unhandled 500.
+export const updateMaterialSchema = z.object({
+  density: z.string().regex(/^\d+(\.\d+)?$/, "Density must be a positive number").nullable().optional(),
+  isHygroscopic: z.boolean().nullable().optional(),
+});
+
+export type UpdateMaterial = z.infer<typeof updateMaterialSchema>;
+
 export type InsertColor = z.infer<typeof insertColorSchema>;
 export type Color = typeof colors.$inferSelect;
 

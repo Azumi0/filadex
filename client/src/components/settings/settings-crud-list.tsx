@@ -58,6 +58,8 @@ export interface SettingsCrudListConfig<T extends { id: number }, FormValues ext
   renderItemCells?: (item: T) => ReactNode;
   /** Chips layout: label content of each chip */
   renderChipLabel?: (item: T) => ReactNode;
+  /** Whether the caller may delete a given item - defaults to admin-only, same as add/reorder */
+  canDelete?: (item: T) => boolean;
   csvFormat: string;
   csvFields: string[];
 }
@@ -79,6 +81,7 @@ export function SettingsCrudList<T extends { id: number }, FormValues extends Re
     renderAddFields,
     renderItemCells,
     renderChipLabel,
+    canDelete,
     csvFormat,
     csvFields,
   } = config;
@@ -87,6 +90,7 @@ export function SettingsCrudList<T extends { id: number }, FormValues extends Re
   const { isAdmin } = useAuth();
   const label = (suffix: string) => t(`settings.${entityKey}.${suffix}`);
   const canReorder = reorderable && isAdmin;
+  const canDeleteItem = canDelete ?? (() => isAdmin);
 
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
@@ -270,7 +274,7 @@ export function SettingsCrudList<T extends { id: number }, FormValues extends Re
                     className="flex items-center gap-2 px-3 py-1.5 theme-primary-bg-20 text-white hover:theme-primary-bg-30 border-white/20"
                   >
                     {renderChipLabel?.(item)}
-                    {isAdmin && (
+                    {canDeleteItem(item) && (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -325,7 +329,7 @@ export function SettingsCrudList<T extends { id: number }, FormValues extends Re
                                     </TableCell>
                                     {renderItemCells?.(item)}
                                     <TableCell className="text-right py-1 whitespace-nowrap w-16">
-                                      {isAdmin && (
+                                      {canDeleteItem(item) && (
                                         <Button
                                           variant="ghost"
                                           size="icon"
@@ -352,7 +356,7 @@ export function SettingsCrudList<T extends { id: number }, FormValues extends Re
                         <TableRow key={item.id}>
                           {renderItemCells?.(item)}
                           <TableCell className="text-right">
-                            {isAdmin && (
+                            {canDeleteItem(item) && (
                               <Button
                                 variant="ghost"
                                 size="icon"

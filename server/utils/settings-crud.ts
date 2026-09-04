@@ -46,7 +46,15 @@ export interface CrudEntityConfig<T extends { id: number; userId?: number | null
     create: (data: InsertT) => Promise<T>;
     delete: (id: number) => Promise<boolean>;
     updateOrder?: (id: number, newOrder: number) => Promise<T | undefined>;
+    /**
+     * Optional PUT /:id capability for filling in fields on a row that
+     * already exists (distinct from `create`, which always makes a new one).
+     * Only `materials` sets this - see `updateSchema`.
+     */
+    update?: (id: number, data: Partial<InsertT>) => Promise<T | undefined>;
   };
+  /** Validates the PUT body; required together with `storage.update`. */
+  updateSchema?: ZodType<Partial<InsertT>>;
   csv: {
     exportHeader: string;
     exportRow: (item: T) => string;
@@ -57,11 +65,20 @@ export interface CrudEntityConfig<T extends { id: number; userId?: number | null
   isInUse: (filament: Filament, item: T) => boolean;
 }
 
+// Ownership rule for a userScoped entity: a Personal Catalog row (`userId`
+// set) may be acted on by the user who owns it; a Global Catalog row
+// (`userId` null) only by an admin. Shared by DELETE and PUT so the rule
+// lives in one place.
+function ownsOrIsAdmin(item: { userId?: number | null }, callerId: number | undefined, callerIsAdmin: boolean): boolean {
+  const ownsIt = item.userId !== null && item.userId !== undefined && item.userId === callerId;
+  return ownsIt || callerIsAdmin;
+}
+
 export function registerCrudSettingsRoutes<T extends { id: number; userId?: number | null }, InsertT>(
   app: Express,
   config: CrudEntityConfig<T, InsertT>
 ): void {
-  const { entityName, basePath, csvFilename, insertSchema, storage: entityStorage, csv, isInUse, userScoped } = config;
+  const { entityName, basePath, csvFilename, insertSchema, updateSchema, storage: entityStorage, csv, isInUse, userScoped } = config;
   const label = entityName.charAt(0).toUpperCase() + entityName.slice(1);
 
   app.get(basePath, authenticate, async (req, res) => {
@@ -160,13 +177,8 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
         return res.status(404).json({ message: `${label} not found` });
       }
 
-      if (userScoped) {
-        const ownsIt = item.userId !== null && item.userId === req.userId;
-        // A global row (userId null) stays admin-only; a Personal Catalog row
-        // can be deleted by the user who owns it.
-        if (!ownsIt && !req.user?.isAdmin) {
-          return res.status(403).json({ message: `Cannot delete a ${entityName} you do not own` });
-        }
+      if (userScoped && !ownsOrIsAdmin(item, req.userId, !!req.user?.isAdmin)) {
+        return res.status(403).json({ message: `Cannot delete a ${entityName} you do not own` });
       }
 
       const filaments = await storage.getFilaments(req.userId);
@@ -187,6 +199,56 @@ export function registerCrudSettingsRoutes<T extends { id: number; userId?: numb
       res.status(500).json({ message: `Failed to delete ${entityName}` });
     }
   });
+
+  const update = entityStorage.update;
+  if (update) {
+    if (!updateSchema) {
+      // Both are independently optional in the type, but one without the
+      // other is a config mistake, not a runtime state to degrade for - fail
+      // at startup rather than 500 on the first request.
+      throw new Error(`registerCrudSettingsRoutes(${entityName}): storage.update requires updateSchema`);
+    }
+
+    // Same admin-or-owner rule as DELETE. A non-userScoped entity that ever
+    // sets `update` would be admin-only throughout, same as DELETE's guard.
+    const updateGuards = userScoped ? [authenticate] : [authenticate, isAdmin];
+    app.put(`${basePath}/:id`, ...updateGuards, async (req, res) => {
+      try {
+        const id = validateId(req.params.id);
+        if (id === null) {
+          return res.status(400).json({ message: `Invalid ${entityName} ID` });
+        }
+
+        const items = await entityStorage.getAll(req.userId);
+        const item = items.find((i) => i.id === id);
+        if (!item) {
+          return res.status(404).json({ message: `${label} not found` });
+        }
+
+        if (userScoped && !ownsOrIsAdmin(item, req.userId, !!req.user?.isAdmin)) {
+          return res.status(403).json({ message: `Cannot edit a ${entityName} you do not own` });
+        }
+
+        const validatedData = updateSchema.parse(req.body);
+        if (Object.keys(validatedData as object).length === 0) {
+          return res.status(400).json({ message: "No fields to update" });
+        }
+
+        const updated = await update(id, validatedData);
+        if (!updated) {
+          return res.status(404).json({ message: `${label} not found` });
+        }
+
+        res.json(updated);
+      } catch (error) {
+        if (error instanceof ZodError) {
+          return res.status(400).json({ message: fromZodError(error).message });
+        }
+        appLogger.error(`Error updating ${entityName}:`, error);
+        res.status(500).json({ message: `Failed to update ${entityName}` });
+      }
+    });
+  }
 
   const updateOrder = entityStorage.updateOrder;
   if (updateOrder) {
