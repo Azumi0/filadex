@@ -60,6 +60,25 @@ describe("GET /api/materials", () => {
     expect(names(res.body)).toEqual(["AliceOnly", "PLA"]);
   });
 
+  // The Global Catalog is the curated list an admin has put in reorder order;
+  // a Personal Catalog entry is whatever the user happened to type on a Spool,
+  // so it belongs after that list rather than interleaved into it - both
+  // default to sort_order 999 and would otherwise mix.
+  it("lists the Global Catalog in its own order, then the caller's own entries by name", async () => {
+    const alice = await newUser("alice");
+    await storage.createMaterial({ name: "PETG" });
+    const [pla] = await db.insert(materials).values({ name: "PLA" }).returning();
+    await storage.updateMaterialOrder(pla.id, 1);
+    await db.insert(materials).values([
+      { userId: alice.id, name: "Zylon" },
+      { userId: alice.id, name: "MoonPLA" },
+    ]);
+
+    const res = await request(app).get("/api/materials").set("Cookie", alice.cookie);
+
+    expect(res.body.map((m: { name: string }) => m.name)).toEqual(["PLA", "PETG", "MoonPLA", "Zylon"]);
+  });
+
   // The client tells the three cases apart from these facts alone (no status
   // enum): userId null is the Global Catalog; userId set with density/
   // isHygroscopic still at the auto-registration defaults needs attention;

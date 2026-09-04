@@ -898,7 +898,11 @@ export class DatabaseStorage implements IStorage {
   async getMaterials(userId: number): Promise<Material[]> {
     return await db.select().from(materials)
       .where(materialInScopeFor(userId))
-      .orderBy(materials.sortOrder, materials.name);
+      // The Global Catalog first, in the order an admin arranged it, then the
+      // user's own entries by name. Both default to sort_order 999, so without
+      // the first key an auto-registered personal row would land among the
+      // curated ones.
+      .orderBy(sql`${materials.userId} IS NOT NULL`, materials.sortOrder, materials.name);
   }
 
   async resolveMaterial(userId: number, declared: string): Promise<Material | undefined> {
