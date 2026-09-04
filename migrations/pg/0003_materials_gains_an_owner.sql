@@ -16,8 +16,13 @@
 DO $$
 DECLARE conflict text;
 BEGIN
-  SELECT string_agg(DISTINCT lower(name), ', ') INTO conflict
-    FROM materials GROUP BY lower(name) HAVING count(*) > 1;
+  -- Aggregated over the grouped set, not within each group: `string_agg`
+  -- under the GROUP BY would only ever see one name per group, and SELECT INTO
+  -- without STRICT keeps the first row - so an operator with three collisions
+  -- would get three failed starts, each naming one.
+  SELECT string_agg(duplicate, ', ') INTO conflict
+    FROM (SELECT lower(name) AS duplicate FROM materials
+          GROUP BY lower(name) HAVING count(*) > 1) duplicates;
   IF conflict IS NOT NULL THEN
     RAISE EXCEPTION 'Cannot add case-insensitive material uniqueness: duplicate names exist (%). Merge or rename them, then re-run.', conflict;
   END IF;
