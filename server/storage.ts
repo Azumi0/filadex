@@ -343,7 +343,6 @@ export interface IStorage {
   updateManufacturerOrder(id: number, newOrder: number): Promise<Manufacturer | undefined>;
 
   // Material operations
-  /** The Global Catalog plus `userId`'s Personal Catalog; the whole table when `userId` is omitted. */
   /** The Global Catalog plus that user's Personal Catalog. */
   getMaterials(userId: number): Promise<Material[]>;
   /**
