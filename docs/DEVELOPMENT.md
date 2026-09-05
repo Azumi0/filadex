@@ -202,16 +202,40 @@ The database schema is defined in `shared/schema.ts` using Drizzle ORM.
 **To update the database schema:**
 
 1. Modify the schema in `shared/schema.ts`
-2. Generate a migration from the change:
+2. Generate a migration **for both engines** - `shared/schema.ts` feeds both, so
+   a change that reaches only one leaves the other behind:
    ```bash
-   npm run db:generate
+   npm run db:generate         # writes migrations/pg
+   npm run db:generate:sqlite  # writes migrations/sqlite
    ```
-   This writes a new numbered `.sql` file into `migrations/pg` and records it in
-   `migrations/pg/meta/_journal.json`. Commit both.
+   Each writes a new numbered `.sql` file and records it in that engine's
+   `meta/_journal.json`. Commit the `.sql`, the journal, and the snapshot.
 3. Apply it:
    ```bash
    npm run db:migrate
    ```
+
+`npm run db:check-drift` regenerates both chains into a temp directory and
+fails if either is missing a migration, so forgetting one is caught in CI rather
+than in production.
+
+#### Two drizzle-kit behaviours worth knowing
+
+**Generated `.sql` files have no trailing newline.** This is drizzle-kit's output
+format, not an oversight: `migrations/pg/0000_right_mathemanic.sql`,
+`0002_nifty_joseph.sql`, `0004_materials_attention_dismissed.sql` and
+`migrations/sqlite/0000_light_catseye.sql` are all written this way, while the
+hand-written migrations beside them do end in one. Do not "fix" a generated file
+to satisfy the CONTRIBUTING.md "end all files with a newline" rule - the next
+`db:generate` silently reverts it, and it puts the file out of step with every
+other generated migration. That rule is about files people write.
+
+**Regenerating a chain from scratch needs the directory removed, not emptied.**
+`drizzle-kit generate` reads `meta/_journal.json` before it writes anything and
+dies with `ENOENT ... _journal.json` if the directory exists without it. To
+rebuild a baseline, `rm -rf` the whole engine directory and let the command
+recreate it. Only ever do this for an engine with no deployed databases; a
+released chain is frozen, and rewriting it strands every installation on it.
 
 **Note**: `npm run db:push` applies the schema directly, without a migration
 file. It is convenient for a scratch database, but a deployment only ever gets
