@@ -1,5 +1,5 @@
 {
-  "id": "fd661d91-916e-4a25-b06a-2f2c007ff57d",
+  "id": "e6ac7f64-158f-4871-b28b-e31b8babc0e2",
   "prevId": "5bbd3e41-2298-4f05-92b3-9fe007e5eaf2",
   "version": "7",
   "dialect": "postgresql",
@@ -72,74 +72,6 @@
           ]
         }
       },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.backup_settings": {
-      "name": "backup_settings",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "default": 1
-        },
-        "enabled": {
-          "name": "enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": false
-        },
-        "schedule": {
-          "name": "schedule",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'off'"
-        },
-        "time": {
-          "name": "time",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'02:00'"
-        },
-        "day_of_week": {
-          "name": "day_of_week",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "default": 1
-        },
-        "retention_count": {
-          "name": "retention_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 7
-        },
-        "last_backup_at": {
-          "name": "last_backup_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1347,16 +1279,22 @@
           "primaryKey": false,
           "notNull": false,
           "default": "'0.8'"
+        },
+        "username_folded": {
+          "name": "username_folded",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         }
       },
       "indexes": {
-        "users_username_lower_idx": {
-          "name": "users_username_lower_idx",
+        "users_username_folded_idx": {
+          "name": "users_username_folded_idx",
           "columns": [
             {
-              "expression": "lower(\"username\")",
+              "expression": "username_folded",
+              "isExpression": false,
               "asc": true,
-              "isExpression": true,
               "nulls": "last"
             }
           ],

@@ -537,7 +537,11 @@ describe("PUT /api/users/:id", () => {
   // prefills the username, which would resubmit that name unchanged on any edit
   // - locking the account out of administration over a field nobody touched.
   // The rules apply to a name being set, not to one already held.
-  describe("a username the rules would now refuse, held since before they applied", () => {
+  // The exemption for a name already held is unchanged by usernames widening to
+  // Latin script - it just applies to a smaller set now. `müller` is a legal
+  // name from this branch on, so a still-refused example has to be one the rule
+  // still refuses: a dot was never allowed, in any charset.
+  describe("a username the rules still refuse, held since before they applied", () => {
     async function createLegacyUser(username: string) {
       return await storage.createUser({
         username,
@@ -551,38 +555,38 @@ describe("PUT /api/users/:id", () => {
     }
 
     it("still accepts an edit that resubmits it unchanged", async () => {
-      const legacy = await createLegacyUser("m\u00fcller");
+      const legacy = await createLegacyUser("max.mustermann");
 
       const response = await request(app)
         .put(`/api/users/${legacy.id}`)
         .set("Cookie", adminCookie)
-        .send({ username: "m\u00fcller", isAdmin: true });
+        .send({ username: "max.mustermann", isAdmin: true });
 
       expect(response.status).toBe(200);
-      expect(response.body).toMatchObject({ username: "m\u00fcller", isAdmin: true });
+      expect(response.body).toMatchObject({ username: "max.mustermann", isAdmin: true });
     });
 
     it("still accepts a password reset that resubmits it unchanged", async () => {
-      const legacy = await createLegacyUser("m\u00fcller2");
+      const legacy = await createLegacyUser("max.mustermann2");
 
       await request(app)
         .put(`/api/users/${legacy.id}`)
         .set("Cookie", adminCookie)
-        .send({ username: "m\u00fcller2", password: "a-new-password" })
+        .send({ username: "max.mustermann2", password: "a-new-password" })
         .expect(200);
 
-      await expect(loginAs(app, "m\u00fcller2", "a-new-password")).resolves.toBeTruthy();
+      await expect(loginAs(app, "max.mustermann2", "a-new-password")).resolves.toBeTruthy();
     });
 
     // Recasing is setting a new name, not keeping the one already held, so it
     // gets the same answer any other rename to a refused name would.
     it("refuses to change it, even by capitalisation alone", async () => {
-      const legacy = await createLegacyUser("m\u00fcller3");
+      const legacy = await createLegacyUser("max.mustermann3");
 
       const response = await request(app)
         .put(`/api/users/${legacy.id}`)
         .set("Cookie", adminCookie)
-        .send({ username: "M\u00fcller3" });
+        .send({ username: "Max.mustermann3" });
 
       expect(response.status).toBe(400);
       expect(response.body.message).toBe(
@@ -590,24 +594,58 @@ describe("PUT /api/users/:id", () => {
       );
 
       const unchanged = await storage.getUser(legacy.id);
-      expect(unchanged?.username).toBe("m\u00fcller3");
+      expect(unchanged?.username).toBe("max.mustermann3");
     });
 
     // The exemption is for the name this user already has, not for refused
     // names generally.
     it("does not let another user be renamed onto a name like it", async () => {
-      await createLegacyUser("m\u00fcller4");
+      await createLegacyUser("max.mustermann4");
       const bob = await createUserAsAdmin({ username: "bob", password: "bobs-password" });
 
       const response = await request(app)
         .put(`/api/users/${bob.id}`)
         .set("Cookie", adminCookie)
-        .send({ username: "m\u00fcller4" });
+        .send({ username: "max.mustermann4" });
 
       expect(response.status).toBe(400);
       expect(response.body.message).toBe(
         "Username may only contain letters, numbers, underscores, and hyphens",
       );
+    });
+  });
+
+  // The counterpart: a name that used to be refused and now is not. These two
+  // used to be the cases above - they are the behaviour change this branch makes.
+  describe("a username with diacritics, now that they are allowed", () => {
+    it("can be recased, because folding makes it the same account", async () => {
+      const mueller = await createUserAsAdmin({
+        username: "m\u00fcller",
+        password: "muellers-password",
+      });
+
+      const response = await request(app)
+        .put(`/api/users/${mueller.id}`)
+        .set("Cookie", adminCookie)
+        .send({ username: "M\u00fcller" });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ username: "M\u00fcller" });
+    });
+
+    it("still refuses another user renamed onto it, in any spelling", async () => {
+      await createUserAsAdmin({ username: "m\u00fcller", password: "muellers-password" });
+      const bob = await createUserAsAdmin({ username: "bob", password: "bobs-password" });
+
+      for (const taken of ["m\u00fcller", "M\u00dcLLER", "mu\u0308ller"]) {
+        const response = await request(app)
+          .put(`/api/users/${bob.id}`)
+          .set("Cookie", adminCookie)
+          .send({ username: taken });
+
+        expect(response.status).toBe(400);
+        expect(response.body.message).toBe("Username already exists");
+      }
     });
   });
 

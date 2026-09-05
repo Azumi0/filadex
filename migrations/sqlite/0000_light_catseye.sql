@@ -199,9 +199,10 @@ CREATE TABLE `users` (
 	`theme_variant` text DEFAULT 'professional',
 	`theme_primary` text DEFAULT '#EA580C',
 	`theme_appearance` text DEFAULT 'dark',
-	`theme_radius` text DEFAULT '0.8'
+	`theme_radius` text DEFAULT '0.8',
+	`username_folded` text NOT NULL
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `users_username_key` ON `users` (`username`);--> statement-breakpoint
 CREATE UNIQUE INDEX `users_email_key` ON `users` (`email`);--> statement-breakpoint
-CREATE UNIQUE INDEX `users_username_lower_idx` ON `users` (lower("username"));
+CREATE UNIQUE INDEX `users_username_folded_idx` ON `users` (`username_folded`);

@@ -11,6 +11,7 @@ import bcrypt from "bcrypt";
 import { db, closeDb } from "@db";
 import {
   users,
+  foldUsername,
   filamentTypes,
   filaments,
   manufacturers,
@@ -85,7 +86,7 @@ async function seedDemo(): Promise<void> {
 
   // One transaction, so a failure leaves nothing half-seeded.
   await db.transaction(async (tx) => {
-    const [admin, alice, bob, unverified] = await tx.insert(users).values([
+    const seedUsers = [
       {
         username: "admin", password, role: "admin", isAdmin: true,
         emailVerified: true, forceChangePassword: false, lastLogin: daysAgo(1),
@@ -106,7 +107,14 @@ async function seedDemo(): Promise<void> {
         emailVerified: false, forceChangePassword: false,
         emailVerificationToken: "seed-verification-token", emailVerificationExpires: daysAgo(-1),
       },
-    ]).returning();
+    ];
+
+    // Derived here rather than written out, for the reason storage.ts derives it:
+    // a row whose folded form disagrees with its username answers to the wrong
+    // name, and a fixture is no more exempt from that than an account is.
+    const [admin, alice, bob, unverified] = await tx.insert(users).values(
+      seedUsers.map((user) => ({ ...user, usernameFolded: foldUsername(user.username) })),
+    ).returning();
 
     await tx.insert(manufacturers).values([
       { name: "Bambu Lab", sortOrder: 1 },

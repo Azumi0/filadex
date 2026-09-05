@@ -155,12 +155,20 @@ behind the same alias. `eqIgnoreCase` is `LOWER(a) = LOWER(b)` on both.
 
 SQLite's `LIKE` folds case for ASCII only, so a community-filament search for
 `grun` will not match `Grün` on a SQLite install, where on Postgres it depends
-on the database's collation. This is accepted rather than worked around. It is
-the *same* constraint the product already accepts for usernames — recorded in
-the comment above `usernameSchema` in `shared/schema.ts` — and the alternatives
-are worse: registering a custom collation makes a search silently fall back to
-ASCII folding if connection setup fails, and folding in JavaScript costs a
-shadow column and a write path, for a ranking nuisance on a single-user install.
+on the database's collation. This is accepted rather than worked around. The
+alternatives are worse: registering a custom collation makes a search silently
+fall back to ASCII folding if connection setup fails, and folding in JavaScript
+costs a shadow column and a write path, for a ranking nuisance on a single-user
+install.
+
+Usernames are the one place that price *was* paid — `foldUsername` and
+`users.username_folded`, added on main while this branch was open. The
+difference is what the comparison decides. A fold that disagrees between
+installs decides which account a login reaches and whether two people can hold
+one name, so it cannot be left to the engine; a fold that disagrees about
+search decides only whether a suggestion appears while the user keeps typing.
+Reading `username_folded` as a precedent for doing the same to
+`community_filament_cache` would be reading the wrong half of it.
 
 ### One index key varies by dialect, and it is not a mistake
 

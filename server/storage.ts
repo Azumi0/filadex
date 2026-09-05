@@ -17,6 +17,7 @@ import {
   communityFilamentCache, type CommunityFilamentCacheEntry,
   emailSettings, type EmailSettings,
   backupSettings, type BackupSettings,
+  foldUsername,
 } from "@shared/schema";
 import { db, dialect, vacuumBackup } from "@db";
 import { eq, sql, and, or, inArray, desc, isNull, count } from "drizzle-orm";
@@ -396,8 +397,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
+    // Matched on the folded column rather than with eqIgnoreCase: LOWER() folds
+    // only ASCII on a C-locale database, so once a username can hold diacritics
+    // the database can no longer be the thing deciding what "the same name"
+    // means. foldUsername is that decision, and username_folded is its result.
     const [user] = await db.select().from(users)
-      .where(eqIgnoreCase(users.username, username));
+      .where(eq(users.usernameFolded, foldUsername(username)));
     return user || undefined;
   }
 
@@ -412,9 +417,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createUser(newUser: NewUser): Promise<User> {
+    // username_folded is derived here, never passed in, so no caller can create
+    // a row whose folded form disagrees with its username.
     const [user] = await db
       .insert(users)
-      .values(newUser)
+      .values({ ...newUser, usernameFolded: foldUsername(newUser.username) })
       .returning();
     return user;
   }
@@ -500,7 +507,13 @@ export class DatabaseStorage implements IStorage {
       return await this.getUser(id);
     }
 
-    const [updated] = await db.update(users).set(changes).where(eq(users.id, id)).returning();
+    // A rename has to carry the folded form with it, or the account keeps
+    // answering to its old name and the unique index guards the wrong value.
+    const columns = changes.username === undefined
+      ? changes
+      : { ...changes, usernameFolded: foldUsername(changes.username) };
+
+    const [updated] = await db.update(users).set(columns).where(eq(users.id, id)).returning();
     return updated || undefined;
   }
 

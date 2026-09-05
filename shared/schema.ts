@@ -34,11 +34,21 @@ export const users = table("users", {
   themePrimary: t.text("theme_primary").default("#EA580C"),
   themeAppearance: t.text("theme_appearance").default("dark"), // 'light' | 'dark'
   themeRadius: t.numeric("theme_radius").default("0.8"),
+  // The username as the account namespace sees it: NFC-normalised and
+  // case-folded by foldUsername, written by storage.ts on every create and
+  // rename. Never displayed - `username` keeps the capitalisation the user
+  // chose - and never set by a caller.
+  usernameFolded: t.text("username_folded").notNull(),
 }, (table) => [
-  // Enforces that usernames are unique regardless of case. This is what makes
-  // the LOWER() lookups throughout the app safe: without it "Alice" and "alice"
-  // could both exist and the lookup would be ambiguous.
-  uniqueIndex("users_username_lower_idx").on(sql`lower(${table.username})`),
+  // Enforces that usernames are unique regardless of case, and - now that they
+  // may hold diacritics - regardless of which Unicode spelling was typed.
+  //
+  // This replaced a `lower(username)` expression index. The database cannot be
+  // the thing that folds: `LOWER()` folds only ASCII when lc_ctype is C, so on
+  // such an install `Müller` and `müller` both lower to themselves and the
+  // index would let both accounts exist. Folding in the application and storing
+  // the result makes uniqueness mean the same thing on every deployment.
+  uniqueIndex("users_username_folded_idx").on(table.usernameFolded),
 ]);
 
 // A filament product (vendor, material, color, diameter, print temp) defined
@@ -123,22 +133,67 @@ export const updateThemeSchema = z.object({
 
 export type UpdateTheme = z.infer<typeof updateThemeSchema>;
 
-// 3-30 chars, letters/numbers/underscore/hyphen only - shared between the
-// registration schema and the /api/auth/check-username validation.
+/**
+ * The one normalisation a username passes through on its way in.
+ *
+ * A letter with a diacritic has two encodings that render identically: `ü` is
+ * either U+00FC, or `u` followed by U+0308. Which one arrives depends on the
+ * keyboard, the operating system, and whether the text was pasted. Left alone
+ * they are different strings, so two accounts could display the same name, and
+ * someone who registered with one spelling and later typed the other would be
+ * told their password was wrong.
+ */
+export const normalizeUsername = (username: string): string => username.normalize("NFC");
+
+/**
+ * The account namespace's idea of "the same name", stored as `username_folded`
+ * and used for every uniqueness check and every lookup.
+ *
+ * Folding happens here rather than in SQL because `LOWER()` folds only ASCII
+ * when the database's lc_ctype is C, and Filadex can be pointed at an
+ * operator's own server (docs/adr/0002). Doing it in JS makes `Müller` and
+ * `müller` the same account on every install rather than only on some.
+ *
+ * `ß` does not fold to `ss` here, so `Straße` and `Strasse` remain two
+ * accounts. That is a deliberate limit: full case folding would also have to
+ * decide about the many other one-to-many mappings, and no rule the database
+ * can enforce would agree with it.
+ */
+export const foldUsername = (username: string): string =>
+  normalizeUsername(username).toLowerCase();
+
+// 3-30 characters, letters, numbers, underscore and hyphen - shared between the
+// registration schema, /api/auth/check-username and the admin endpoints.
 //
-// The ASCII-only restriction is deliberate, not an oversight - `müller` really
-// cannot be registered here. Usernames are compared case-insensitively for both
-// uniqueness and login, through LOWER() in server/db/predicates.ts, and that
-// comparison agrees with the users_username_lower_idx unique index only while
-// both stay ASCII: LOWER() on non-ASCII depends on the database's collation,
-// which varies across the installs this project supports. Widening the charset
-// would move correctness onto that collation, so it is not a regex change - it
-// is a uniqueness-and-login question that has to be re-answered together.
+// "Letters" means Latin-script letters, not A-Za-z. The UI ships in German and
+// this could not hold `müller`, which is not a rule anyone chose - the class was
+// written as A-Za-z and never revisited. Latin script covers every umlaut,
+// eszett and accent the German and English UIs can produce.
+//
+// It is deliberately not \p{L}. That would also admit Cyrillic `а` (U+0430),
+// which renders identically to Latin `a`, so `аdmin` and `admin` would be two
+// accounts indistinguishable wherever a username is shown - including the
+// public sharing page, which needs no login to view. Nothing here detects
+// confusables, and folding does not help: the two differ in every comparison
+// available. Restricting to one script is what keeps that closed. Widening to
+// all of them is a one-token change, but it should be a deliberate one, made
+// together with confusable detection. Digits stay 0-9 for the same reason -
+// \p{N} would admit Arabic-Indic digits.
+//
+// Normalisation runs first, so the length and character checks see one
+// canonical form: a decomposed `ü` is a letter followed by a combining mark,
+// which this class would otherwise reject while the composed spelling passed.
+// It also makes `max(30)` mean 30 characters rather than 30 code points.
 export const usernameSchema = z
   .string()
-  .min(3, "Username must be at least 3 characters")
-  .max(30, "Username must be at most 30 characters")
-  .regex(/^[a-zA-Z0-9_-]+$/, "Username may only contain letters, numbers, underscores, and hyphens");
+  .transform(normalizeUsername)
+  .pipe(
+    z
+      .string()
+      .min(3, "Username must be at least 3 characters")
+      .max(30, "Username must be at most 30 characters")
+      .regex(/^[\p{Script=Latin}0-9_-]+$/u, "Username may only contain letters, numbers, underscores, and hyphens"),
+  );
 
 // Shared between self-registration and admin-created accounts so the two ways
 // of creating a user cannot drift apart on what counts as an acceptable password.
@@ -306,8 +361,7 @@ export const materials = table("materials", {
   // Unique within the Global Catalog, and unique within each Personal Catalog,
   // case-insensitively. Two partial indexes rather than one on
   // (user_id, lower(name)) because SQL NULLs never conflict with each other, so
-  // a single index would let the Global Catalog hold duplicates. Precedent:
-  // users_username_lower_idx.
+  // a single index would let the Global Catalog hold duplicates.
   uniqueIndex("materials_global_name_lower_idx")
     .on(sql`lower(${table.name})`).where(sql`${table.userId} IS NULL`),
   // nullableIndexKey wraps user_id in `coalesce(user_id, 0)` on Postgres (because
