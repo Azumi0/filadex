@@ -5,16 +5,16 @@ import * as schema from "@shared/schema";
 import fs from "node:fs";
 import path from "node:path";
 
-export function normalizeSqliteUrl(url: string): string {
-  if (url.startsWith("sqlite:")) {
-    return url.replace(/^sqlite:/, "file:");
-  }
-  return url;
-}
+import { normalizeSqliteUrl } from "./sqlite-url";
 
-// In test runs under the Postgres leg, importing this module (e.g. for normalizeSqliteUrl
-// or @db mock) must not fail on an unset or postgresql: DATABASE_URL.
-const rawUrl = process.env.DATABASE_URL || (process.env.NODE_ENV === "test" ? "file::memory:" : "");
+// Importing this module under the Postgres test leg (for the @db mock, or for
+// normalizeSqliteUrl) must not fail on the DATABASE_URL that happens to be in the
+// environment. The suite never connects through DATABASE_URL - it uses
+// TEST_DATABASE_URL - so under NODE_ENV=test any value this driver cannot open is
+// ambient shell noise, and an in-memory database stands in for it.
+const envUrl = process.env.DATABASE_URL || "";
+const isSqliteUrl = envUrl.startsWith("file:") || envUrl.startsWith("sqlite:");
+const rawUrl = process.env.NODE_ENV === "test" && !isSqliteUrl ? "file::memory:" : envUrl;
 if (!rawUrl) {
   throw new Error(
     "DATABASE_URL must be set. Did you forget to provision a database?",

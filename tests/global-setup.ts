@@ -21,7 +21,8 @@ import path from "node:path";
  * which would destroy a development database configured in the shell.
  */
 
-import { isSqlite as checkIsSqlite, normalizeSqliteUrl } from "./helpers/dialect";
+import { isSqlite as checkIsSqlite } from "./helpers/dialect";
+import { normalizeSqliteUrl } from "../server/sqlite-url";
 
 // Matches the version docker-compose.template.yml deploys.
 const POSTGRES_IMAGE = "postgres:15-alpine";

@@ -33,7 +33,8 @@ const {
   generateSQLiteDrizzleJson,
   generateSQLiteMigration,
 } = require("drizzle-kit/api");
-import { isSqlite as checkIsSqlite, normalizeSqliteUrl } from "./dialect";
+import { isSqlite as checkIsSqlite } from "./dialect";
+import { normalizeSqliteUrl } from "../../server/sqlite-url";
 
 const databaseUrl = inject("databaseUrl");
 const isSqlite = checkIsSqlite(databaseUrl);

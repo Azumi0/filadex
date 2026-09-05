@@ -1,24 +1,22 @@
-import { beforeEach, afterEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
 import { registerAuthRoutes } from "../../server/routes/auth";
 import { registerBackupRoutes } from "../../server/routes/backups";
 import { initializeAdminUser } from "../../server/auth";
 import { storage } from "../../server/storage";
 import { createApp, loginAs, registerAndVerify } from "../helpers/app";
+import { useTempBackupDir } from "../helpers/backup-dir";
 
 let app: Express;
 let adminCookie: string;
 let userCookie: string;
-let testBackupDir: string;
+
+const backupDir = useTempBackupDir();
 
 beforeEach(async () => {
-  testBackupDir = fs.mkdtempSync(path.join(os.tmpdir(), "filadex-backup-test-"));
-  process.env.BACKUP_DIR = testBackupDir;
-
   app = createApp(registerAuthRoutes, registerBackupRoutes);
   await initializeAdminUser();
   adminCookie = await loginAs(app, "admin", "admin");
@@ -27,12 +25,6 @@ beforeEach(async () => {
     email: "bob@example.com",
     password: "bob-password-123",
   });
-});
-
-afterEach(() => {
-  if (testBackupDir && fs.existsSync(testBackupDir)) {
-    fs.rmSync(testBackupDir, { recursive: true, force: true });
-  }
 });
 
 describe("GET /api/system/database", () => {
@@ -128,7 +120,7 @@ describe.skipIf(storage.getDialect() !== "sqlite")("Backup routes on SQLite", ()
     expect(create1.body.filename).toMatch(/^filadex-backup-.*\.db$/);
     expect(create1.body.size).toBeGreaterThan(0);
 
-    const fullPath1 = path.join(testBackupDir, create1.body.filename);
+    const fullPath1 = path.join(backupDir(), create1.body.filename);
     expect(fs.existsSync(fullPath1)).toBe(true);
 
     const header = Buffer.alloc(16);
@@ -205,8 +197,8 @@ describe.skipIf(storage.getDialect() !== "sqlite")("Backup routes on SQLite", ()
     const header = res.body.slice(0, 15).toString("utf8");
     expect(header).toBe("SQLite format 3");
 
-    // No files should be left in testBackupDir
-    const files = fs.readdirSync(testBackupDir);
+    // No files should be left in the backup directory
+    const files = fs.readdirSync(backupDir());
     expect(files.length).toBe(0);
   });
 });
