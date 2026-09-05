@@ -6,7 +6,7 @@
  *
  * See docs/adr/0004.
  */
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import { db, closeDb } from "@db";
 import {
@@ -61,6 +61,11 @@ async function seedStarter(): Promise<void> {
     await tx.insert(colors).values([
       { name: "Black (Bambu Lab)", code: "#000000" },
       { name: "White (Bambu Lab)", code: "#FFFFFF" },
+      // Carried over from the seed docker-entrypoint.sh ran before this script
+      // existed, so a fresh install still starts with the Bambu Lab codes.
+      { name: "Dark Gray (Bambu Lab)", code: "#545454" },
+      { name: "Red (Bambu Lab)", code: "#C12E1F" },
+      { name: "Blue (Bambu Lab)", code: "#0A2989" },
       { name: "Transparent", code: "#FFFFFF" },
       { name: "Red", code: "#F44336" },
       { name: "Gray", code: "#9E9E9E" },
@@ -73,6 +78,50 @@ async function seedStarter(): Promise<void> {
   });
 
   console.log("Basic starter selection options inserted.");
+}
+
+/**
+ * The four sample spools init-data.ts created under INIT_SAMPLE_DATA, kept on
+ * the same flag.
+ *
+ * They need an owner, and the only account a fresh install has is the default
+ * admin the application creates at startup. The Docker entrypoint seeds before
+ * the application runs, so there is nobody to own them there and this is a
+ * no-op - exactly as it was on main, where these spools only ever appeared via
+ * `npm run db:init` after a first run.
+ */
+async function seedSampleSpools(): Promise<void> {
+  if (process.env.INIT_SAMPLE_DATA !== "true") return;
+
+  const [admin] = await db.select().from(users).where(eq(users.username, "admin"));
+  if (!admin) {
+    console.log("No admin account yet, so there is nobody to own the sample spools. Skipping.");
+    return;
+  }
+
+  const [existing] = await db.select({ count: sql<number>`count(*)` }).from(filaments);
+  if (Number(existing.count) > 0) {
+    console.log("Spools already exist, skipping sample spools.");
+    return;
+  }
+
+  await db.transaction(async (tx) => {
+    const types = await tx.insert(filamentTypes).values([
+      { userId: admin.id, manufacturer: "Bambu Lab", material: "PLA", colorName: "Black", colorCode: "#000000", diameter: "1.75", printTemp: "200-220" },
+      { userId: admin.id, manufacturer: "Prusament", material: "PETG", colorName: "Transparent", colorCode: "#FFFFFF", diameter: "1.75", printTemp: "230-250" },
+      { userId: admin.id, manufacturer: "Filamentworld", material: "ABS", colorName: "Red", colorCode: "#F44336", diameter: "1.75", printTemp: "240-260" },
+      { userId: admin.id, manufacturer: "Ninjatek", material: "TPU", colorName: "Gray", colorCode: "#9E9E9E", diameter: "1.75", printTemp: "210-230" },
+    ]).returning();
+
+    await tx.insert(filaments).values([
+      { userId: admin.id, filamentTypeId: types[0].id, name: "PLA Black Bambu Lab", totalWeight: "1000", remainingPercentage: "65" },
+      { userId: admin.id, filamentTypeId: types[1].id, name: "PETG Transparent", totalWeight: "1000", remainingPercentage: "15" },
+      { userId: admin.id, filamentTypeId: types[2].id, name: "ABS Red", totalWeight: "1000", remainingPercentage: "0" },
+      { userId: admin.id, filamentTypeId: types[3].id, name: "TPU Flexible Gray", totalWeight: "500", remainingPercentage: "75" },
+    ]);
+  });
+
+  console.log("Sample spools inserted: 4.");
 }
 
 async function seedDemo(): Promise<void> {
@@ -112,9 +161,24 @@ async function seedDemo(): Promise<void> {
     // Derived here rather than written out, for the reason storage.ts derives it:
     // a row whose folded form disagrees with its username answers to the wrong
     // name, and a fixture is no more exempt from that than an account is.
-    const [admin, alice, bob, unverified] = await tx.insert(users).values(
+    const inserted = await tx.insert(users).values(
       seedUsers.map((user) => ({ ...user, usernameFolded: foldUsername(user.username) })),
     ).returning();
+
+    // Looked up by name rather than destructured positionally: a multi-row
+    // .returning() is not promised to come back in the order it was written,
+    // and a fixture that silently gave alice's spools to bob would still seed
+    // without error.
+    const byName = new Map(inserted.map((user) => [user.username, user]));
+    const seeded = (username: string) => {
+      const user = byName.get(username);
+      if (!user) throw new Error(`Seed user ${username} was not inserted.`);
+      return user;
+    };
+    const admin = seeded("admin");
+    const alice = seeded("alice");
+    const bob = seeded("bob");
+    const unverified = seeded("carol");
 
     await tx.insert(manufacturers).values([
       { name: "Bambu Lab", sortOrder: 1 },
@@ -229,6 +293,11 @@ async function main() {
     await seedDemo();
   } else {
     await seedStarter();
+    // Outside seedStarter, which returns early once the catalog is populated.
+    // The spools need an admin the application has not created yet on a first
+    // run, so the run that seeds them is a later one, against a catalog that
+    // already exists.
+    await seedSampleSpools();
   }
 }
 

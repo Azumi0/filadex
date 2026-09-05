@@ -69,12 +69,29 @@ because switching engines should not mean switching image tags.
 value, not a type — so the browser bundle pulls in `shared/schema.ts` and
 through it the dialect's column implementations.
 
-The client is nevertheless built **once**, because the thirteen
-`createInsertSchema` outputs are identical across dialects: `numeric` produces a
-string validator on both, `timestamp` a date, `bool` a boolean, `pk` a number.
-That is not an assumption. A test generates all thirteen under both dialects and
-compares them, so if `columns.sqlite.ts` ever diverges in a way that changes
-validation, it fails there rather than in a browser.
+The client is nevertheless built **once**, because the `createInsertSchema`
+outputs are identical across dialects: `numeric` produces a string validator on
+both, `timestamp` a date, `bool` a boolean, `pk` a number. That is not an
+assumption. `tests/schema-invariance.test.ts` generates every table schema and
+every exported schema under both dialects and compares them field by field and
+check by check — string lengths, number ranges, default values, enum members,
+and both halves of a `ZodPipeline` — so a divergence that changes validation
+fails there rather than in a browser.
+
+The comparison has to go that deep to be worth anything. An earlier version
+stopped at the Zod type name, which compared `ZodString` against `ZodString` and
+never read its checks; a `varchar(n)` against a `text` would have shipped a
+client that rejects input its own server accepts, with the test still green.
+
+**One difference is real, expected, and asserted rather than compared.**
+drizzle-zod derives an integer column's range from the engine's integer width:
+±2³¹ for Postgres `integer`, ±(2⁵³−1) for SQLite. Every integer column differs.
+Those bounds are pulled out of the equality comparison and checked on the
+property that actually matters — Postgres, whose schemas the client bundles,
+must be the *narrower* of the two. A client stricter than its server rejects
+input the server would have taken, which is visible in the UI; the reverse ships
+input the server rejects. Only the two known widths are exempt, so a column that
+grows to `bigint` fails the comparison and has to be decided deliberately.
 
 This is worth more than building the client twice would have been. Two bundles
 would have *tolerated* a divergence; the test forbids one, and a failure is a
@@ -103,9 +120,16 @@ user sees. TypeScript would have insisted the value was a string the whole time.
 A `TEXT` column round-trips `"1000"` and `"0.10"` byte-identically.
 
 The capability given up is numeric comparison in SQL, because `TEXT` compares
-lexicographically — `pct < '10'` matches nothing. **Nothing in the application
-uses it.** Every comparison and aggregation over these columns happens in
-JavaScript through `Number(...)`: `server/utils/notification-checks.ts:36`,
+lexicographically — `pct < '10'` matches nothing. **One place in the application
+uses it**, and it is an equality rather than an ordering: `findOrCreateFilamentType`
+matches a declared diameter against `filament_types.diameter`
+(`server/storage.ts:171`), where a real `numeric` makes `'1.750'` and `'1.75'`
+the same value and `TEXT` does not — so the same CSV import reused a filament
+type on Postgres and created a second one on SQLite. That equality goes through
+`eqNumeric` (`server/db/predicates.*.ts`), which casts on the SQLite side so
+both engines answer the way Postgres always did. Everything else — every
+ordering and every aggregation over these columns — happens in JavaScript
+through `Number(...)`: `server/utils/notification-checks.ts:36`,
 `server/routes/statistics.ts:56-82`, `server/routes/spoolman-compat.ts:65`. The
 only SQL aggregates anywhere are `count()` (`server/storage.ts:504,628`) and
 `max(updated_at)` (`:629`), neither over a numeric column.
@@ -169,6 +193,24 @@ one name, so it cannot be left to the engine; a fold that disagrees about
 search decides only whether a suggestion appears while the user keeps typing.
 Reading `username_folded` as a precedent for doing the same to
 `community_filament_cache` would be reading the wrong half of it.
+
+Catalog Material names fall on the *username* side of that line, and were
+initially placed on the wrong one. `storage.resolveMaterial` decides which
+Catalog Material a declared material resolves to, and therefore whether a spool
+inherits a density and a hygroscopic flag and whether the owner's Personal
+Catalog gains a second row that looks identical to one already in it — a
+data-quality question, not a ranking one. Left to `LOWER()`, `Äbs` resolved to
+`äbs` on Postgres and to nothing on SQLite, while the Add Material form, which
+compares in JavaScript, answered 409 for the same pair on both. It now folds in
+JavaScript through `foldMaterialName` (`server/utils/materials.ts`), which is
+`foldUsername`'s rule applied to a trimmed name.
+
+The price paid here is smaller than a shadow column: `resolveMaterial` reads the
+in-scope catalog rather than a single indexed row, which is the Global Catalog
+plus the caller's own entries — a set `getHygroscopicMaterialNames` already
+reads whole for the same reason. The partial unique indexes on `lower(name)`
+stay as they are and remain a backstop for the ASCII case on both engines; the
+application, not the index, is what enforces the rule.
 
 ### One index key varies by dialect, and it is not a mistake
 

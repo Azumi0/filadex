@@ -5,7 +5,8 @@ import * as schema from "@shared/schema";
 import fs from "node:fs";
 import path from "node:path";
 
-import { normalizeSqliteUrl } from "./sqlite-url";
+import { normalizeSqliteUrl, sqliteFilePath } from "./sqlite-url";
+import { logger } from "./utils/logger";
 
 // Importing this module under the Postgres test leg (for the @db mock, or for
 // normalizeSqliteUrl) must not fail on the DATABASE_URL that happens to be in the
@@ -23,12 +24,33 @@ if (!rawUrl) {
 
 const dbUrl = normalizeSqliteUrl(rawUrl);
 
-if (dbUrl.startsWith("file:")) {
-  const filePath = dbUrl.replace(/^file:\/\//, "/").replace(/^file:/, "");
-  const dir = path.dirname(filePath);
+const filePath = sqliteFilePath(dbUrl);
+if (filePath !== null) {
+  // A relative path resolves against process.cwd(), which in the container is
+  // /app - the image's writable layer, not the mounted volume. The install comes
+  // up healthy and every byte of it is destroyed by the next `docker compose
+  // down && up` or image update. `.env.example` and the README both teach
+  // `file:./dev.db` for local development, so the mistake is one copy-paste from
+  // a deployment, and in production it is never what anyone means.
+  if (!path.isAbsolute(filePath) && process.env.NODE_ENV === "production") {
+    throw new Error(
+      `DATABASE_URL must name an absolute path in production. "${dbUrl}" resolves to ` +
+        `"${path.resolve(filePath)}", which is inside the container rather than a mounted ` +
+        `volume, so the database would be lost on the next restart. Use file:/data/filadex.db.`,
+    );
+  }
+
+  const absolutePath = path.resolve(filePath);
+  const dir = path.dirname(absolutePath);
   if (dir && !fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
+
+  // Which file was opened is the one thing that distinguishes a working install
+  // from an empty one that looks identical, so it is said out loud.
+  logger.info(`SQLite database: ${absolutePath}`);
+} else {
+  logger.info(`SQLite database: ${dbUrl}`);
 }
 
 export const client = createClient({ url: dbUrl });

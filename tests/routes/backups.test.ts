@@ -152,6 +152,56 @@ describe.skipIf(storage.getDialect() !== "sqlite")("Backup routes on SQLite", ()
     expect(list.body[1].filename).toBe(create2.body.filename);
   });
 
+  it("rejects backup settings the scheduler and pruner cannot honour", async () => {
+    const cases = [
+      // retentionCount 0 makes pruneBackups slice(0) and delete every backup,
+      // including the one the same request just wrote.
+      { retentionCount: 0 },
+      { retentionCount: -3 },
+      { retentionCount: 2.5 },
+      { schedule: "hourly" },
+      { time: "25:00" },
+      { time: "2:00" },
+      { dayOfWeek: 0 },
+      { dayOfWeek: 8 },
+    ];
+
+    for (const body of cases) {
+      const res = await request(app)
+        .put("/api/admin/backups/settings")
+        .set("Cookie", adminCookie)
+        .send(body);
+      expect(res.status, `expected 400 for ${JSON.stringify(body)}`).toBe(400);
+    }
+
+    // The stored settings are untouched by the rejected requests.
+    const settings = await request(app)
+      .get("/api/admin/backups/settings")
+      .set("Cookie", adminCookie);
+    expect(settings.body.schedule).toBe("off");
+  });
+
+  it("neither lists nor prunes files it did not create", async () => {
+    // BACKUP_DIR can be pointed at a directory holding an operator's own files -
+    // /data, where the live database sits, is the obvious mistake.
+    const foreign = path.join(backupDir(), "operator-copy.db");
+    fs.writeFileSync(foreign, "not ours");
+
+    await storage.updateBackupSettings({ retentionCount: 1 });
+
+    for (let i = 0; i < 3; i++) {
+      const res = await request(app).post("/api/admin/backups").set("Cookie", adminCookie);
+      expect(res.status).toBe(201);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+
+    const list = await request(app).get("/api/admin/backups").set("Cookie", adminCookie);
+    expect(list.body.map((b: { filename: string }) => b.filename)).not.toContain("operator-copy.db");
+    expect(list.body.length).toBe(1);
+    expect(fs.existsSync(foreign)).toBe(true);
+    expect(fs.readFileSync(foreign, "utf8")).toBe("not ours");
+  });
+
   it("downloads a backup file and rejects path traversal attempts", async () => {
     const create = await request(app)
       .post("/api/admin/backups")

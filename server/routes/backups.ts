@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
+import { pipeline } from "node:stream/promises";
 import { nanoid } from "nanoid";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
@@ -9,6 +10,16 @@ import { authenticate, isAdmin } from "../auth";
 import { storage } from "../storage";
 import { updateBackupSettingsSchema } from "@shared/schema";
 import { logger } from "../utils/logger";
+
+/**
+ * The prefix createBackupFile gives every snapshot it writes.
+ *
+ * listBackupFiles is what pruneBackups deletes from, so it must enumerate only
+ * files this application created. BACKUP_DIR can be pointed anywhere - at
+ * /data, for instance, where the live database sits - and without this an
+ * operator's own files are counted towards retention and eventually unlinked.
+ */
+const BACKUP_FILENAME_PREFIX = "filadex-backup-";
 
 export function getBackupDir(): string {
   if (process.env.BACKUP_DIR) {
@@ -30,7 +41,9 @@ export interface BackupFileInfo {
 
 export function listBackupFiles(backupDir: string): BackupFileInfo[] {
   if (!fs.existsSync(backupDir)) return [];
-  const files = fs.readdirSync(backupDir).filter((f) => f.endsWith(".db") || f.endsWith(".sqlite"));
+  const files = fs
+    .readdirSync(backupDir)
+    .filter((f) => f.startsWith(BACKUP_FILENAME_PREFIX) && (f.endsWith(".db") || f.endsWith(".sqlite")));
   const backups = files
     .map((file) => {
       const fullPath = path.join(backupDir, file);
@@ -54,9 +67,14 @@ export function listBackupFiles(backupDir: string): BackupFileInfo[] {
 }
 
 export function pruneBackups(backupDir: string, retentionCount: number): void {
+  // updateBackupSettingsSchema now rejects anything below 1, but a row written
+  // by an earlier build can still hold 0 or a negative number, and either one
+  // is destructive here: slice(0) deletes every backup, and slice(-n) deletes
+  // the n oldest on every single run. Keep at least one snapshot regardless.
+  const keep = Math.max(1, Math.floor(retentionCount));
   const backups = listBackupFiles(backupDir);
-  if (backups.length > retentionCount) {
-    const toDelete = backups.slice(retentionCount);
+  if (backups.length > keep) {
+    const toDelete = backups.slice(keep);
     for (const item of toDelete) {
       try {
         fs.unlinkSync(item.fullPath);
@@ -74,7 +92,7 @@ export async function createBackupFile(): Promise<{ filename: string; size: numb
   }
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const filename = `filadex-backup-${timestamp}.db`;
+  const filename = `${BACKUP_FILENAME_PREFIX}${timestamp}.db`;
   const fullPath = path.join(backupDir, filename);
 
   await storage.createBackup(fullPath);
@@ -191,31 +209,40 @@ export function registerBackupRoutes(app: Express): void {
   // Stream a fresh snapshot directly without leaving a persistent file behind (admin only, SQLite only)
   app.post("/api/admin/backups/stream", authenticate, isAdmin, requireSqliteDialect, async (_req: Request, res: Response) => {
     const tempFile = path.join(os.tmpdir(), `filadex-snapshot-${nanoid()}.db`);
+    const cleanup = () => {
+      try {
+        if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+      } catch {}
+    };
+
     try {
       await storage.createBackup(tempFile);
       const stat = fs.statSync(tempFile);
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       res.setHeader("Content-Type", "application/x-sqlite3");
-      res.setHeader("Content-Disposition", `attachment; filename="filadex-backup-${timestamp}.db"`);
+      res.setHeader("Content-Disposition", `attachment; filename="${BACKUP_FILENAME_PREFIX}${timestamp}.db"`);
       res.setHeader("Content-Length", stat.size);
 
-      const stream = fs.createReadStream(tempFile);
-      stream.pipe(res);
-
-      const cleanup = () => {
-        try {
-          if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
-        } catch {}
-      };
-      res.on("finish", cleanup);
-      res.on("close", cleanup);
+      // pipeline rather than stream.pipe: it destroys the read stream when the
+      // client aborts, instead of leaving the descriptor open until GC, and it
+      // routes a read error into this catch. A bare pipe leaves the read stream
+      // without an 'error' listener, and an unhandled 'error' event terminates
+      // the process.
+      await pipeline(fs.createReadStream(tempFile), res);
     } catch (error) {
-      try {
-        if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
-      } catch {}
-      logger.error("Error streaming backup snapshot:", error);
-      res.status(500).json({ message: "Failed to stream backup snapshot" });
+      if (res.headersSent) {
+        // The body was already going out, so this is the client hanging up
+        // mid-download rather than a server fault, and there is no status left
+        // to send.
+        logger.debug("Backup snapshot download did not complete:", error);
+        res.destroy();
+      } else {
+        logger.error("Error streaming backup snapshot:", error);
+        res.status(500).json({ message: "Failed to stream backup snapshot" });
+      }
+    } finally {
+      cleanup();
     }
   });
 

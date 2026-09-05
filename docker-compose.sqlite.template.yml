@@ -15,6 +15,10 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-en}
       - INIT_SAMPLE_DATA=${INIT_SAMPLE_DATA:-false}
+      # Where scheduled snapshots are written. Defaults to /data/backups, which
+      # is inside the volume below; set it only to move them elsewhere, and give
+      # it a directory of its own.
+      # - BACKUP_DIR=/data/backups
       # Set to a long random string (e.g. `openssl rand -hex 32`) so login sessions
       # survive restarts. If unset, a random secret is generated on each startup.
       - JWT_SECRET=${JWT_SECRET:-}

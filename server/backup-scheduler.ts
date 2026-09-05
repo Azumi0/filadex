@@ -48,22 +48,40 @@ export function isBackupDue(settings: Partial<BackupSettings> | null | undefined
   return !lastBackupAt || lastBackupAt.getTime() < target.getTime();
 }
 
+// isBackupDue is not enough on its own to stop two backups overlapping: the
+// interval fires regardless of whether the previous run finished, and
+// lastBackupAt is only written once createBackupFile() resolves. On a daily
+// schedule the stored value stays ~24h old for the whole duration of a run, so
+// a VACUUM INTO that outlives the interval would let the next tick start a
+// second one against the same database, with a racing pruneBackups behind it.
+let running = false;
+
 export async function runScheduledBackupCheck(): Promise<void> {
   if (storage.getDialect() !== "sqlite") {
     return;
   }
 
-  const settings = await storage.getBackupSettings();
-  if (!isBackupDue(settings)) {
+  if (running) {
+    logger.debug("Scheduled backup still running; skipping this check.");
     return;
   }
 
-  logger.info("Executing scheduled SQLite database backup...");
+  running = true;
   try {
-    const result = await createBackupFile();
-    logger.info(`Scheduled backup completed successfully: ${result.filename} (${result.size} bytes)`);
-  } catch (error) {
-    logger.error("Scheduled backup failed:", error);
+    const settings = await storage.getBackupSettings();
+    if (!isBackupDue(settings)) {
+      return;
+    }
+
+    logger.info("Executing scheduled SQLite database backup...");
+    try {
+      const result = await createBackupFile();
+      logger.info(`Scheduled backup completed successfully: ${result.filename} (${result.size} bytes)`);
+    } catch (error) {
+      logger.error("Scheduled backup failed:", error);
+    }
+  } finally {
+    running = false;
   }
 }
 

@@ -14,3 +14,22 @@ export function normalizeSqliteUrl(url: string): string {
   }
   return url;
 }
+
+/**
+ * The filesystem path a `file:` URL names, with any query string removed.
+ *
+ * Returns null for the in-memory forms (`file::memory:`, with or without
+ * parameters), which name no file at all.
+ */
+export function sqliteFilePath(url: string): string | null {
+  if (!url.startsWith("file:")) return null;
+  if (url.startsWith("file::memory:")) return null;
+
+  const withoutQuery = url.split("?")[0];
+  // `file:///data/x.db` and `file:/data/x.db` are the same path; the first
+  // spelling carries an empty authority component that is not part of it.
+  const rest = withoutQuery.startsWith("file://")
+    ? withoutQuery.slice("file://".length)
+    : withoutQuery.slice("file:".length);
+  return rest;
+}

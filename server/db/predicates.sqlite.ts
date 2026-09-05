@@ -20,17 +20,6 @@ export function eqIgnoreCase(column: AnySQLiteColumn, value: string): SQL {
 }
 
 /**
- * The same rule as {@link eqIgnoreCase}, for two values already in hand rather
- * than in SQL. It lives here so the one place the caseless-comparison rule is
- * defined also covers the JS side: `isInUse` for materials compares a declared
- * material against a Catalog Material name and has to agree with how the two
- * resolve in the database.
- */
-export function equalsIgnoreCase(a: string, b: string): boolean {
-  return a.toLowerCase() === b.toLowerCase();
-}
-
-/**
  * Matches when the column contains the value anywhere in it, ignoring case.
  *
  * `%`, `_` and `\` in the value are escaped rather than stripped, so a search
@@ -42,4 +31,19 @@ export function equalsIgnoreCase(a: string, b: string): boolean {
 export function containsIgnoreCase(column: AnySQLiteColumn, value: string): SQL {
   const escaped = value.replace(/[\\%_]/g, (char) => `\\${char}`);
   return sql`${column} LIKE ${`%${escaped}%`} ESCAPE '\\'`;
+}
+
+/**
+ * Matches when a `numeric` column equals the value as a *number* rather than as
+ * a string, so "1.750" and "1.75" are the same diameter.
+ *
+ * `t.numeric` is TEXT on SQLite (see shared/columns.sqlite.ts), so a plain `=`
+ * is a string comparison and would create a second filament type where
+ * Postgres reuses the existing one. Both sides go through the same CAST, so two
+ * spellings of one value produce the same double and compare equal; a NULL
+ * column stays NULL and matches nothing, which is what the callers' explicit
+ * IS NULL branches expect.
+ */
+export function eqNumeric(column: AnySQLiteColumn, value: string): SQL {
+  return sql`CAST(${column} AS REAL) = CAST(${value} AS REAL)`;
 }

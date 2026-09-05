@@ -239,6 +239,47 @@ describe("runScheduledBackupCheck", () => {
     await expect(runScheduledBackupCheck()).resolves.toBeUndefined();
     expect(loggerErrorSpy).toHaveBeenCalledWith("Scheduled backup failed:", expect.any(Error));
   });
+
+  it("does not start a second backup while one is still running", async () => {
+    vi.spyOn(storage, "getDialect").mockReturnValue("sqlite");
+    vi.spyOn(storage, "getBackupSettings").mockResolvedValue({
+      id: 1,
+      enabled: true,
+      schedule: "daily",
+      time: "02:00",
+      dayOfWeek: 1,
+      retentionCount: 7,
+      // Never backed up, so every tick sees a due backup: lastBackupAt is only
+      // written once the run finishes, which is exactly the window that lets a
+      // long VACUUM INTO be joined by the next interval tick.
+      lastBackupAt: null,
+      updatedAt: new Date(),
+    });
+
+    const backupsModule = await import("../server/routes/backups");
+    let release: () => void = () => {};
+    const inFlight = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const createBackupSpy = vi
+      .spyOn(backupsModule, "createBackupFile")
+      .mockImplementation(async () => {
+        await inFlight;
+        return { filename: "filadex-backup-test.db", size: 1, createdAt: new Date().toISOString() };
+      });
+
+    const first = runScheduledBackupCheck();
+    // A second tick arriving while the first backup is still open.
+    await runScheduledBackupCheck();
+    expect(createBackupSpy).toHaveBeenCalledTimes(1);
+
+    release();
+    await first;
+
+    // Once the first run has finished the guard is clear again.
+    await runScheduledBackupCheck();
+    expect(createBackupSpy).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe.skipIf(storage.getDialect() !== "sqlite")("runScheduledBackupCheck SQLite end-to-end", () => {

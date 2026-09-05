@@ -531,10 +531,27 @@ export const backupSettings = table("backup_settings", {
   updatedAt: t.timestamp("updated_at").defaultNow(),
 });
 
-export const updateBackupSettingsSchema = createInsertSchema(backupSettings).omit({
-  id: true,
-  updatedAt: true,
-});
+// createInsertSchema only knows each column's type and nullability, which for
+// this table is not enough: the UI clamps retention to at least 1 but the API
+// did not, and `retentionCount: 0` makes pruneBackups slice(0) and delete every
+// backup including the one the request just wrote - answering 201 with a
+// filename that no longer exists. A negative value deletes the oldest N per run.
+// The remaining three fields are read as an enum, an HH:MM string and an ISO
+// weekday by the scheduler, so they say so here.
+export const updateBackupSettingsSchema = createInsertSchema(backupSettings)
+  .omit({
+    id: true,
+    updatedAt: true,
+  })
+  .extend({
+    schedule: z.enum(["off", "daily", "weekly"]).optional(),
+    time: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Time must be HH:MM in 24-hour format")
+      .optional(),
+    dayOfWeek: z.number().int().min(1).max(7).nullable().optional(),
+    retentionCount: z.number().int().min(1).optional(),
+  });
 
 export type UpdateBackupSettings = z.infer<typeof updateBackupSettingsSchema>;
 export type BackupSettings = typeof backupSettings.$inferSelect;

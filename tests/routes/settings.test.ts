@@ -410,3 +410,35 @@ describe("the non-scoped entities go through the same factory unchanged", () => 
     expect(res.status).toBe(403);
   });
 });
+
+// Both engines have to answer the same way here, and left to the database they
+// do not: SQLite's LOWER() folds ASCII only, and `numeric` is TEXT there.
+describe("catalog matching agrees across dialects", () => {
+  it("resolves a declared material whose case differs outside ASCII", async () => {
+    const alice = await newUser("alice");
+    await db.insert(materials).values({ userId: alice.id, name: "äbs", density: "1.04", isHygroscopic: true });
+
+    const resolved = await storage.resolveMaterial(alice.id, "Äbs");
+
+    expect(resolved?.name).toBe("äbs");
+    expect(resolved?.isHygroscopic).toBe(true);
+  });
+
+  it("answers 409 for a Catalog Material whose case differs outside ASCII", async () => {
+    await storage.createMaterial({ name: "äbs" });
+
+    const res = await request(app).post("/api/materials").set("Cookie", adminCookie).send({ name: "Äbs" });
+
+    expect(res.status).toBe(409);
+    expect(await allMaterialRows()).toHaveLength(1);
+  });
+
+  it("treats two spellings of the same diameter as one", async () => {
+    const created = await request(app).post("/api/diameters").set("Cookie", adminCookie).send({ value: "1.75" });
+    expect(created.status).toBe(201);
+
+    const duplicate = await request(app).post("/api/diameters").set("Cookie", adminCookie).send({ value: "1.750" });
+
+    expect(duplicate.status).toBe(409);
+  });
+});

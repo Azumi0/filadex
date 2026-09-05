@@ -22,8 +22,8 @@ import {
 import { db, dialect, vacuumBackup } from "@db";
 import { eq, sql, and, or, inArray, desc, isNull, count } from "drizzle-orm";
 import { logger } from "./utils/logger";
-import { containsIgnoreCase, eqIgnoreCase } from "@db/predicates";
-import { catalogName } from "./utils/materials";
+import { containsIgnoreCase, eqIgnoreCase, eqNumeric } from "@db/predicates";
+import { catalogName, foldMaterialName } from "./utils/materials";
 
 /** What the authentication middleware needs to authorize a request. */
 export type AuthContext = {
@@ -168,7 +168,7 @@ async function findOrCreateFilamentType(userId: number, fields: FilamentTypeFiel
     eq(filamentTypes.colorName, fields.colorName),
     manufacturer !== null ? eq(filamentTypes.manufacturer, manufacturer) : isNull(filamentTypes.manufacturer),
     colorCode !== null ? eq(filamentTypes.colorCode, colorCode) : isNull(filamentTypes.colorCode),
-    diameter !== null ? eq(filamentTypes.diameter, diameter) : isNull(filamentTypes.diameter),
+    diameter !== null ? eqNumeric(filamentTypes.diameter, diameter) : isNull(filamentTypes.diameter),
     printTemp !== null ? eq(filamentTypes.printTemp, printTemp) : isNull(filamentTypes.printTemp),
   ];
 
@@ -555,7 +555,7 @@ export class DatabaseStorage implements IStorage {
 
     const winners = new Map<string, { name: string; isHygroscopic: boolean | null }>();
     for (const row of rows) {
-      const key = catalogName(row.name).toLowerCase();
+      const key = foldMaterialName(row.name);
       if (row.userId !== null || !winners.has(key)) winners.set(key, row);
     }
 
@@ -986,12 +986,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   async resolveMaterial(userId: number, declared: string): Promise<Material | undefined> {
-    const [row] = await db.select().from(materials)
-      .where(and(eqIgnoreCase(materials.name, catalogName(declared)), materialInScopeFor(userId)))
+    // Matched on the folded name in JS rather than with eqIgnoreCase, for the
+    // reason getUserByUsername matches on username_folded: SQLite's LOWER()
+    // folds ASCII only, so leaving this to the database makes `Äbs` resolve to
+    // `äbs` on Postgres and to nothing on SQLite. See foldMaterialName.
+    //
+    // The set is small by construction - the Global Catalog plus this user's own
+    // entries - and getHygroscopicMaterialNames already reads it whole for the
+    // same reason.
+    const target = foldMaterialName(declared);
+    const rows = await db.select().from(materials)
+      .where(materialInScopeFor(userId))
       // The user's own Personal Catalog row wins when a Global one also matches.
-      .orderBy(sql`${materials.userId} IS NULL`)
-      .limit(1);
-    return row ?? undefined;
+      .orderBy(sql`${materials.userId} IS NULL`);
+    return rows.find((row) => foldMaterialName(row.name) === target);
   }
 
   async createMaterial(insertMaterial: InsertMaterial): Promise<Material> {

@@ -152,3 +152,34 @@ describe("auto-registration of a declared material", () => {
     expect(await ownRows(alice.id)).toHaveLength(0);
   });
 });
+
+describe("filament type reuse across dialects", () => {
+  // `t.numeric` is a real numeric on Postgres and TEXT on SQLite, so a plain `=`
+  // deduped "1.750" against "1.75" on one engine and not the other - the same
+  // CSV import producing one filament type or two depending on the install.
+  it("reuses one filament type for two spellings of the same diameter", async () => {
+    const alice = await newUser("alice");
+
+    const first = await storage.createFilament({
+      userId: alice.id,
+      name: "First spool",
+      material: "PLA",
+      colorName: "Black",
+      diameter: "1.75",
+      totalWeight: "1000",
+      remainingPercentage: "80",
+    });
+
+    const second = await storage.createFilament({
+      userId: alice.id,
+      name: "Second spool",
+      material: "PLA",
+      colorName: "Black",
+      diameter: "1.750",
+      totalWeight: "1000",
+      remainingPercentage: "80",
+    });
+
+    expect(second.filamentTypeId).toBe(first.filamentTypeId);
+  });
+});
