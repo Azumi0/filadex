@@ -37,3 +37,7 @@ await client.executeMultiple(`
 `);
 
 export const db = drizzle(client, { schema });
+export async function closeDb(): Promise<void> {
+  client.close();
+}
+
