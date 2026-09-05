@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import { isBackupDue, runScheduledBackupCheck } from "../server/backup-scheduler";
 import { storage } from "../server/storage";
+import { logger } from "../server/utils/logger";
 import type { BackupSettings } from "@shared/schema";
 
 describe("isBackupDue", () => {
@@ -38,7 +42,7 @@ describe("isBackupDue", () => {
     expect(isBackupDue(settings, now)).toBe(true);
   });
 
-  it("returns true when a tick is delayed or missed (A2 bug: current minute > target minute)", () => {
+  it("returns true when a tick is delayed or missed (current minute > target minute)", () => {
     const settings: Partial<BackupSettings> = {
       id: 1,
       enabled: true,
@@ -53,7 +57,7 @@ describe("isBackupDue", () => {
     expect(isBackupDue(settings, now)).toBe(true);
   });
 
-  it("returns true when server restarts past the target hour (A2 bug: restarted at 03:30)", () => {
+  it("returns true when server restarts past the target hour (restarted at 03:30)", () => {
     const settings: Partial<BackupSettings> = {
       id: 1,
       enabled: true,
@@ -123,8 +127,18 @@ describe("isBackupDue", () => {
       lastBackupAt: new Date(2026, 7, 31, 3, 0, 0), // Last Monday
     };
 
-    // Tuesday at 03:00 -> false
-    expect(isBackupDue(settings, new Date(2026, 8, 8, 3, 0, 0))).toBe(false);
+    // Tuesday at 03:00 -> true (missed Monday backup is due)
+    expect(isBackupDue(settings, new Date(2026, 8, 8, 3, 0, 0))).toBe(true);
+
+    // After running on Tuesday at 03:05, Wednesday at 03:00 should not be due
+    const completedSettings: Partial<BackupSettings> = {
+      ...settings,
+      lastBackupAt: new Date(2026, 8, 8, 3, 5, 0),
+    };
+    expect(isBackupDue(completedSettings, new Date(2026, 8, 9, 3, 0, 0))).toBe(false);
+
+    // Next Monday at 03:00 (2026-09-14) should be due again
+    expect(isBackupDue(completedSettings, new Date(2026, 8, 14, 3, 0, 0))).toBe(true);
 
     // Monday before target -> false
     expect(isBackupDue(settings, new Date(2026, 8, 7, 2, 59, 0))).toBe(false);
@@ -144,6 +158,89 @@ describe("runScheduledBackupCheck", () => {
     await runScheduledBackupCheck();
     expect(getSettingsSpy).not.toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+
+  it("does not create backup when backup is not due", async () => {
+    vi.spyOn(storage, "getDialect").mockReturnValue("sqlite");
+    vi.spyOn(storage, "getBackupSettings").mockResolvedValue({
+      id: 1,
+      enabled: false,
+      schedule: "off",
+      time: "02:00",
+      dayOfWeek: 1,
+      retentionCount: 7,
+      lastBackupAt: null,
+      updatedAt: new Date(),
+    });
+    const backupsModule = await import("../server/routes/backups");
+    const createBackupSpy = vi.spyOn(backupsModule, "createBackupFile");
+    await runScheduledBackupCheck();
+    expect(createBackupSpy).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("catches and logs error if createBackupFile fails", async () => {
+    vi.spyOn(storage, "getDialect").mockReturnValue("sqlite");
+    vi.spyOn(storage, "getBackupSettings").mockResolvedValue({
+      id: 1,
+      enabled: true,
+      schedule: "daily",
+      time: "02:00",
+      dayOfWeek: 1,
+      retentionCount: 7,
+      lastBackupAt: null,
+      updatedAt: new Date(),
+    });
+    const backupsModule = await import("../server/routes/backups");
+    vi.spyOn(backupsModule, "createBackupFile").mockRejectedValue(new Error("disk full"));
+    const loggerErrorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+
+    await expect(runScheduledBackupCheck()).resolves.toBeUndefined();
+    expect(loggerErrorSpy).toHaveBeenCalledWith("Scheduled backup failed:", expect.any(Error));
+
+    vi.restoreAllMocks();
+  });
+});
+
+describe.skipIf(storage.getDialect() !== "sqlite")("runScheduledBackupCheck SQLite end-to-end", () => {
+  let testBackupDir: string;
+  let originalBackupDir: string | undefined;
+
+  beforeEach(async () => {
+    testBackupDir = fs.mkdtempSync(path.join(os.tmpdir(), "filadex-sched-test-"));
+    originalBackupDir = process.env.BACKUP_DIR;
+    process.env.BACKUP_DIR = testBackupDir;
+  });
+
+  afterEach(() => {
+    process.env.BACKUP_DIR = originalBackupDir;
+    fs.rmSync(testBackupDir, { recursive: true, force: true });
+    vi.useRealTimers();
+  });
+
+  it("calls createBackupFile and records lastBackupAt when backup is due", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 5, 3, 0, 0));
+
+    await storage.updateBackupSettings({
+      enabled: true,
+      schedule: "daily",
+      time: "02:00",
+      lastBackupAt: null,
+    });
+
+    await runScheduledBackupCheck();
+
+    const settingsAfter = await storage.getBackupSettings();
+    expect(settingsAfter?.lastBackupAt).not.toBeNull();
+
+    const files = fs.readdirSync(testBackupDir).filter((f) => f.startsWith("filadex-backup-"));
+    expect(files.length).toBe(1);
+
+    // Running again immediately should be a no-op due to dedupe/target check
+    await runScheduledBackupCheck();
+    const filesAfter = fs.readdirSync(testBackupDir).filter((f) => f.startsWith("filadex-backup-"));
+    expect(filesAfter.length).toBe(1);
   });
 });
 

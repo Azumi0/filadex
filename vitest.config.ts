@@ -1,10 +1,9 @@
 import { defineConfig } from "vitest/config";
 import path from "path";
 
-const isSqlite =
-  process.env.TEST_DIALECT === "sqlite" ||
-  process.env.TEST_DATABASE_URL?.startsWith("file:") === true ||
-  process.env.TEST_DATABASE_URL?.startsWith("sqlite:") === true;
+import { isSqlite as checkIsSqlite } from "./tests/helpers/dialect";
+
+const isSqlite = checkIsSqlite();
 
 export default defineConfig({
   resolve: {

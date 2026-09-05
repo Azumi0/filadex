@@ -8,7 +8,6 @@ import { registerAuthRoutes } from "../../server/routes/auth";
 import { registerBackupRoutes } from "../../server/routes/backups";
 import { initializeAdminUser } from "../../server/auth";
 import { storage } from "../../server/storage";
-import { normalizeSqliteUrl } from "../../server/db.sqlite";
 import { createApp, loginAs, registerAndVerify } from "../helpers/app";
 
 let app: Express;
@@ -49,14 +48,6 @@ describe("GET /api/system/database", () => {
     expect(res.status).toBe(200);
     expect(["postgres", "sqlite"]).toContain(res.body.dialect);
     expect(res.body.dialect).toBe(storage.getDialect());
-  });
-});
-
-describe("SQLite URL normalization (A1)", () => {
-  it("normalizes sqlite: URL scheme to file: for @libsql/client compatibility", () => {
-    expect(normalizeSqliteUrl("sqlite:/data/filadex.db")).toBe("file:/data/filadex.db");
-    expect(normalizeSqliteUrl("sqlite:///data/filadex.db")).toBe("file:///data/filadex.db");
-    expect(normalizeSqliteUrl("file:/data/filadex.db")).toBe("file:/data/filadex.db");
   });
 });
 
@@ -128,7 +119,6 @@ describe.skipIf(storage.getDialect() !== "sqlite")("Backup routes on SQLite", ()
   });
 
   it("creates a backup on disk, updates lastBackupAt, and prunes old backups", async () => {
-
     await storage.updateBackupSettings({ retentionCount: 2 });
 
     const create1 = await request(app)

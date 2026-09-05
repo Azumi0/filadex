@@ -12,6 +12,8 @@ export function normalizeSqliteUrl(url: string): string {
   return url;
 }
 
+// In test runs under the Postgres leg, importing this module (e.g. for normalizeSqliteUrl
+// or @db mock) must not fail on an unset or postgresql: DATABASE_URL.
 const rawUrl = process.env.DATABASE_URL || (process.env.NODE_ENV === "test" ? "file::memory:" : "");
 if (!rawUrl) {
   throw new Error(

@@ -33,13 +33,13 @@ const {
   generateSQLiteDrizzleJson,
   generateSQLiteMigration,
 } = require("drizzle-kit/api");
-import { isSqlite as checkIsSqlite } from "./dialect";
+import { isSqlite as checkIsSqlite, normalizeSqliteUrl } from "./dialect";
 
 const databaseUrl = inject("databaseUrl");
 const isSqlite = checkIsSqlite(databaseUrl);
 
 const pool = isSqlite ? null : new pg.Pool({ connectionString: databaseUrl });
-export const client = isSqlite ? createClient({ url: databaseUrl }) : null;
+export const client = isSqlite ? createClient({ url: normalizeSqliteUrl(databaseUrl) }) : null;
 
 if (isSqlite && client) {
   await client.executeMultiple(`

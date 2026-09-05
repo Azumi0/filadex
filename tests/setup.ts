@@ -5,13 +5,14 @@ import { afterAll, beforeAll, beforeEach, vi } from "vitest";
 // instead - reached through the dialect's driver, owned by the test suite.
 vi.mock("@db", async () => {
   const { db, dialect, vacuumBackup } = await import("./helpers/db");
+  const { normalizeSqliteUrl } = await vi.importActual<typeof import("../server/db.sqlite")>("../server/db.sqlite");
   return {
     db,
     dialect,
     vacuumBackup,
     pool: undefined,
     client: undefined,
-    normalizeSqliteUrl: (url: string) => (url.startsWith("sqlite:") ? url.replace(/^sqlite:/, "file:") : url),
+    normalizeSqliteUrl,
   };
 });
 vi.mock("../server/db.ts", async () => {

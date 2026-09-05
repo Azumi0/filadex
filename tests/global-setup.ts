@@ -21,7 +21,7 @@ import path from "node:path";
  * which would destroy a development database configured in the shell.
  */
 
-import { isSqlite as checkIsSqlite } from "./helpers/dialect";
+import { isSqlite as checkIsSqlite, normalizeSqliteUrl } from "./helpers/dialect";
 
 // Matches the version docker-compose.template.yml deploys.
 const POSTGRES_IMAGE = "postgres:15-alpine";
@@ -31,7 +31,7 @@ export default async function setup({ provide }: TestProject) {
 
   if (isSqlite) {
     if (process.env.TEST_DATABASE_URL) {
-      provide("databaseUrl", process.env.TEST_DATABASE_URL);
+      provide("databaseUrl", normalizeSqliteUrl(process.env.TEST_DATABASE_URL));
       return;
     }
 

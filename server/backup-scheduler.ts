@@ -25,48 +25,31 @@ export function isBackupDue(settings: Partial<BackupSettings> | null | undefined
     }
   }
 
-  if (settings.schedule === "daily") {
-    const targetToday = new Date(now);
-    targetToday.setHours(targetH, targetM, 0, 0);
-
-    if (now.getTime() < targetToday.getTime()) {
-      return false;
-    }
-
-    if (settings.lastBackupAt) {
-      const last = new Date(settings.lastBackupAt);
-      if (last.getTime() >= targetToday.getTime()) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
+  let daysAgo = 0;
   if (settings.schedule === "weekly") {
-    const day = now.getDay() === 0 ? 7 : now.getDay();
-    if (day !== (settings.dayOfWeek ?? 1)) {
-      return false;
-    }
-
-    const targetToday = new Date(now);
-    targetToday.setHours(targetH, targetM, 0, 0);
-
-    if (now.getTime() < targetToday.getTime()) {
-      return false;
-    }
-
-    if (settings.lastBackupAt) {
-      const last = new Date(settings.lastBackupAt);
-      if (last.getTime() >= targetToday.getTime()) {
-        return false;
-      }
-    }
-
-    return true;
+    const currentDay = now.getDay() === 0 ? 7 : now.getDay();
+    const targetDay = settings.dayOfWeek ?? 1;
+    daysAgo = (currentDay - targetDay + 7) % 7;
+  } else if (settings.schedule !== "daily") {
+    return false;
   }
 
-  return false;
+  const target = new Date(now);
+  target.setDate(now.getDate() - daysAgo);
+  target.setHours(targetH, targetM, 0, 0);
+
+  if (now.getTime() < target.getTime()) {
+    return false;
+  }
+
+  if (settings.lastBackupAt) {
+    const last = new Date(settings.lastBackupAt);
+    if (last.getTime() >= target.getTime()) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 export async function runScheduledBackupCheck(): Promise<void> {
