@@ -8,6 +8,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dialect: [postgres, sqlite]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,8 +24,33 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm run check
-      - run: npm test
+      - name: Type check (Postgres)
+        if: matrix.dialect == 'postgres'
+        run: npm run check
+      - name: Type check (SQLite)
+        if: matrix.dialect == 'sqlite'
+        run: npm run check:sqlite
+      - name: Run tests (Postgres)
+        if: matrix.dialect == 'postgres'
+        run: npm test
+      - name: Run tests (SQLite)
+        if: matrix.dialect == 'sqlite'
+        run: TEST_DIALECT=sqlite npm test
+
+  # Catches schema changes that missed a migration on either dialect: runs
+  # drizzle-kit generate for each engine into temporary directories and fails
+  # if any new migration is generated. Proves that checked-in migrations
+  # fully describe shared/schema.ts for both PostgreSQL and SQLite.
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run db:check-drift
 
   # Proves that a database created by an older Filadex still upgrades cleanly:
   # every row preserved, the same schema a fresh install gets, and every spool
