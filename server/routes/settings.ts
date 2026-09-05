@@ -16,7 +16,7 @@ import {
 } from "@shared/schema";
 import { parseCSVLine, escapeCsvField } from "../utils/csv-parser";
 import { registerCrudSettingsRoutes, simpleNameParseLine } from "../utils/settings-crud";
-import { equalsIgnoreCase } from "../db/predicates";
+import { equalsIgnoreCase } from "@db/predicates";
 import { catalogName } from "../utils/materials";
 
 export function registerSettingsRoutes(app: Express): void {

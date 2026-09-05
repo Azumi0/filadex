@@ -17,10 +17,10 @@ import {
   communityFilamentCache, type CommunityFilamentCacheEntry,
   emailSettings, type EmailSettings,
 } from "@shared/schema";
-import { db } from "./db";
+import { db } from "@db";
 import { eq, sql, and, or, inArray, desc, isNull, count } from "drizzle-orm";
 import { logger } from "./utils/logger";
-import { containsIgnoreCase, eqIgnoreCase } from "./db/predicates";
+import { containsIgnoreCase, eqIgnoreCase } from "@db/predicates";
 import { catalogName } from "./utils/materials";
 
 /** What the authentication middleware needs to authorize a request. */
@@ -612,7 +612,7 @@ export class DatabaseStorage implements IStorage {
 
   async replaceCommunityFilaments(entries: NewCommunityFilament[]): Promise<void> {
     await db.transaction(async (tx) => {
-      await tx.execute(sql`TRUNCATE TABLE community_filament_cache`);
+      await tx.delete(communityFilamentCache);
       if (entries.length > 0) {
         // Insert in chunks to stay well under typical parameter-count limits
         const CHUNK_SIZE = 500;

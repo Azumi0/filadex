@@ -5,8 +5,10 @@
     "paths": {
       "@/*": ["./client/src/*"],
       "@shared/columns": ["./shared/columns.sqlite.ts"],
-      "@shared/*": ["./shared/*"]
+      "@shared/*": ["./shared/*"],
+      "@db": ["./server/db.sqlite.ts"],
+      "@db/predicates": ["./server/db/predicates.sqlite.ts"]
     }
   },
-  "include": ["client/src/**/*", "shared/**/*"]
+  "include": ["client/src/**/*", "shared/**/*", "server/**/*"]
 }
