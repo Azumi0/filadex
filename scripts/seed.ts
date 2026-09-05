@@ -95,7 +95,7 @@ async function seedSampleSpools(): Promise<void> {
 
   const [admin] = await db.select().from(users).where(eq(users.username, "admin"));
   if (!admin) {
-    console.log("No admin account yet, so there is nobody to own the sample spools. Skipping.");
+    console.log("Sample spools need an account to own them; the application creates the default admin next.");
     return;
   }
 

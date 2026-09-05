@@ -212,15 +212,24 @@ Expected startup sequence:
 ```text
 Database: SQLite
 Applying database migrations...
+[INFO] SQLite database: /data/filadex.db
 Applying SQLite database migrations...
 SQLite database is up to date.
 Seeding starter data...
+[INFO] SQLite database: /data/filadex.db
 Adding starter selection options (manufacturers, materials, colors, etc.)...
+Basic starter selection options inserted.
+Sample spools need an account to own them; the application creates the default admin next.
 Starting application...
-SQLite database: /data/filadex.db
-Default admin user created
+[INFO] SQLite database: /data/filadex.db
+[INFO] Default admin user created
 serving on port 8080
 ```
+
+`SQLite database: /data/filadex.db` appears three times because the migrator,
+the seeder and the application each open the database and each say which file
+they opened. Seeing the path you configured, rather than a path under `/app`, is
+the check that your volume mapping is correct.
 
 Check File Station under `/docker/filadex/data/`. You should see `filadex.db`, `filadex.db-wal`, and `filadex.db-shm`.
 
@@ -333,7 +342,8 @@ If the domain does not load, run the following diagnostic steps in order:
 5. **3D Printer & Moonraker Integration (Optional):**
    * If integrating with Klipper / Moonraker / Mainsail, go to **Settings → API Tokens**.
    * Generate an API token (prefixed with `fdx_`).
-   * Filadex provides native Spoolman API compatibility endpoints under `/api/v1/` (e.g., `/api/v1/spool`), allowing print servers to sync spool usage automatically.
+   * Filadex implements the subset of Spoolman's REST API that Moonraker's `[spoolman]` module calls, under `/api/spoolman-compat/v1/` (e.g. `/api/spoolman-compat/v1/spool`). Point Moonraker's `server:` setting at `https://filadex.yourdomain.synology.me/api/spoolman-compat` and pass the token.
+   * Note the path is **not** `/api/v1/` — that falls through to the web interface and returns HTML, which Moonraker reports as an unhelpful parse error.
 
 ---
 
@@ -343,7 +353,7 @@ If the domain does not load, run the following diagnostic steps in order:
 Filadex includes native SQLite backup management accessible via **Settings → DB Backups** (admin only):
 * **Online Snapshots:** Uses SQLite's `VACUUM INTO` command, generating a consistent database copy on disk without stopping the container or locking concurrent readers.
 * **Automated Schedule:** Configure backups to run daily or weekly at a chosen time, with customizable retention pruning (e.g., keep the last 7 snapshots).
-* Backups are saved to `/data/backups/filadex-backup-YYYY-MM-DD-*.db` inside your mounted `./data` volume.
+* Backups are saved inside your mounted `./data` volume as `/data/backups/filadex-backup-<timestamp>.db`, for example `filadex-backup-2026-09-05T21-21-26-489Z.db`.
 * You can also trigger an immediate manual snapshot or download existing backup files directly from the UI.
 
 ### 2. Synology Hyper Backup
