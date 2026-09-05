@@ -15,11 +15,19 @@ import { useToast } from "@/components/ui/use-toast";
 import { Logo } from "@/components/logo";
 import { Check, X } from "lucide-react";
 
+// Mirrors usernameSchema in shared/schema.ts, normalisation included. Without
+// the NFC step a decomposed `u` + U+0308 is a letter followed by a combining
+// mark, so the field would reject a name the server accepts - and the same name
+// would register fine from a keyboard that composes.
 const createRegisterSchema = (t: (key: string) => string) => z.object({
   username: z.string()
-    .min(3, t('auth.usernameTooShort'))
-    .max(30, t('auth.usernameTooLong'))
-    .regex(/^[a-zA-Z0-9_-]+$/, t('auth.usernameInvalidChars')),
+    .transform((value) => value.normalize("NFC"))
+    .pipe(
+      z.string()
+        .min(3, t('auth.usernameTooShort'))
+        .max(30, t('auth.usernameTooLong'))
+        .regex(/^[\p{Script=Latin}0-9_-]+$/u, t('auth.usernameInvalidChars')),
+    ),
   email: z.string().email(t('auth.emailInvalid')),
   password: z.string().min(8, t('auth.passwordTooShort')),
 });
