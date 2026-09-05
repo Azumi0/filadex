@@ -377,6 +377,15 @@ that would be a third copy of the domain logic. It belongs below it, and after
 0001 closed the leak, `server/storage.ts` is the only place in the application
 that imports `server/db`.
 
+**`getDialect()` and `createBackup()` are the deliberate exceptions.** Neither
+carries domain logic: `getDialect` returns the `dialect` constant and
+`createBackup` forwards to `vacuumBackup`, both of which the `@db` alias has
+already resolved per engine, so the variation still lives below the seam rather
+than at it. They sit on `IStorage` precisely to keep the rule above true - the
+alternative is for `server/backup-scheduler.ts` and `server/routes/backups.ts` to
+import `server/db` themselves, which would make storage no longer the only
+importer. An accessor on the seam is a smaller price than four new importers.
+
 **No facade over Drizzle.** A `Database` type wrapping `select`/`insert`/`where`
 /`transaction` would have an interface nearly as large as the thing it wraps, an
 implementation that is pure pass-through, and it would destroy the type
