@@ -10,5 +10,5 @@
       "@db/predicates": ["./server/db/predicates.sqlite.ts"]
     }
   },
-  "include": ["client/src/**/*", "shared/**/*", "server/**/*", "tests/**/*"]
+  "include": ["client/src/**/*", "shared/**/*", "server/**/*", "tests/**/*", "scripts/**/*", "migrations/**/*", "vitest.config.ts"]
 }

@@ -3,8 +3,8 @@ import path from "path";
 
 const isSqlite =
   process.env.TEST_DIALECT === "sqlite" ||
-  process.env.DIALECT === "sqlite" ||
-  process.env.TEST_DATABASE_URL?.startsWith("file:");
+  process.env.TEST_DATABASE_URL?.startsWith("file:") === true ||
+  process.env.TEST_DATABASE_URL?.startsWith("sqlite:") === true;
 
 export default defineConfig({
   resolve: {

@@ -8,6 +8,7 @@ import { registerAuthRoutes } from "../../server/routes/auth";
 import { registerBackupRoutes } from "../../server/routes/backups";
 import { initializeAdminUser } from "../../server/auth";
 import { storage } from "../../server/storage";
+import { normalizeSqliteUrl } from "../../server/db.sqlite";
 import { createApp, loginAs, registerAndVerify } from "../helpers/app";
 
 let app: Express;
@@ -36,18 +37,31 @@ afterEach(() => {
 });
 
 describe("GET /api/system/database", () => {
-  it("reports the current database dialect", async () => {
+  it("rejects unauthenticated requests", async () => {
     const res = await request(app).get("/api/system/database");
+    expect(res.status).toBe(401);
+  });
+
+  it("reports the current database dialect to authenticated users", async () => {
+    const res = await request(app)
+      .get("/api/system/database")
+      .set("Cookie", userCookie);
     expect(res.status).toBe(200);
     expect(["postgres", "sqlite"]).toContain(res.body.dialect);
     expect(res.body.dialect).toBe(storage.getDialect());
   });
 });
 
-describe("Backup routes on Postgres", () => {
-  it("refuses all backup endpoints if dialect is Postgres", async () => {
-    if (storage.getDialect() !== "postgres") return;
+describe("SQLite URL normalization (A1)", () => {
+  it("normalizes sqlite: URL scheme to file: for @libsql/client compatibility", () => {
+    expect(normalizeSqliteUrl("sqlite:/data/filadex.db")).toBe("file:/data/filadex.db");
+    expect(normalizeSqliteUrl("sqlite:///data/filadex.db")).toBe("file:///data/filadex.db");
+    expect(normalizeSqliteUrl("file:/data/filadex.db")).toBe("file:/data/filadex.db");
+  });
+});
 
+describe.skipIf(storage.getDialect() !== "postgres")("Backup routes on Postgres", () => {
+  it("refuses all backup endpoints if dialect is Postgres", async () => {
     const listRes = await request(app)
       .get("/api/admin/backups")
       .set("Cookie", adminCookie);
@@ -71,17 +85,13 @@ describe("Backup routes on Postgres", () => {
   });
 });
 
-describe("Backup routes on SQLite", () => {
+describe.skipIf(storage.getDialect() !== "sqlite")("Backup routes on SQLite", () => {
   it("rejects unauthenticated requests", async () => {
-    if (storage.getDialect() !== "sqlite") return;
-
     const res = await request(app).get("/api/admin/backups");
     expect(res.status).toBe(401);
   });
 
   it("rejects authenticated non-admin users", async () => {
-    if (storage.getDialect() !== "sqlite") return;
-
     const res = await request(app)
       .get("/api/admin/backups")
       .set("Cookie", userCookie);
@@ -89,8 +99,6 @@ describe("Backup routes on SQLite", () => {
   });
 
   it("gets and updates backup settings", async () => {
-    if (storage.getDialect() !== "sqlite") return;
-
     const initial = await request(app)
       .get("/api/admin/backups/settings")
       .set("Cookie", adminCookie);
@@ -120,7 +128,6 @@ describe("Backup routes on SQLite", () => {
   });
 
   it("creates a backup on disk, updates lastBackupAt, and prunes old backups", async () => {
-    if (storage.getDialect() !== "sqlite") return;
 
     await storage.updateBackupSettings({ retentionCount: 2 });
 
@@ -164,8 +171,6 @@ describe("Backup routes on SQLite", () => {
   });
 
   it("downloads a backup file and rejects path traversal attempts", async () => {
-    if (storage.getDialect() !== "sqlite") return;
-
     const create = await request(app)
       .post("/api/admin/backups")
       .set("Cookie", adminCookie);
@@ -196,27 +201,7 @@ describe("Backup routes on SQLite", () => {
     expect(notFound.status).toBe(404);
   });
 
-  it("deletes a backup file", async () => {
-    if (storage.getDialect() !== "sqlite") return;
-
-    const create = await request(app)
-      .post("/api/admin/backups")
-      .set("Cookie", adminCookie);
-    expect(create.status).toBe(201);
-    const filename = create.body.filename;
-
-    const del = await request(app)
-      .delete(`/api/admin/backups/${filename}`)
-      .set("Cookie", adminCookie);
-    expect(del.status).toBe(200);
-    expect(del.body.success).toBe(true);
-
-    expect(fs.existsSync(path.join(testBackupDir, filename))).toBe(false);
-  });
-
   it("streams a snapshot without leaving a persistent file", async () => {
-    if (storage.getDialect() !== "sqlite") return;
-
     const res = await request(app)
       .post("/api/admin/backups/stream")
       .set("Cookie", adminCookie)

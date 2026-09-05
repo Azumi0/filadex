@@ -16,6 +16,7 @@ export function log(message: string, source = "express") {
 }
 
 export async function setupVite(app: Express, server: Server) {
+  // Indirect specifiers prevent esbuild from bundling Vite and its config into production builds.
   const vitePkg = "vite";
   const { createServer: createViteServer, createLogger } = await import(vitePkg);
   const configPath = "../vite.config";

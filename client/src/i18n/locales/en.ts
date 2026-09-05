@@ -366,9 +366,7 @@ const translations = {
       streamSnapshot: 'Download Live Snapshot',
       streamingSnapshot: 'Downloading snapshot...',
       streamError: 'Failed to download snapshot',
-      deleteSuccess: 'Backup deleted',
-      deleteError: 'Failed to delete backup',
-      confirmDelete: 'Are you sure you want to delete this backup?',
+      downloadError: 'Failed to download backup',
       table: {
         filename: 'Filename',
         size: 'Size',
@@ -376,7 +374,6 @@ const translations = {
         actions: 'Actions',
         empty: 'No backups found on disk',
         download: 'Download',
-        delete: 'Delete',
       },
       scheduleCard: {
         title: 'Automated Backups',

@@ -21,14 +21,13 @@ import path from "node:path";
  * which would destroy a development database configured in the shell.
  */
 
+import { isSqlite as checkIsSqlite } from "./helpers/dialect";
+
 // Matches the version docker-compose.template.yml deploys.
 const POSTGRES_IMAGE = "postgres:15-alpine";
 
 export default async function setup({ provide }: TestProject) {
-  const isSqlite =
-    process.env.TEST_DIALECT === "sqlite" ||
-    process.env.DIALECT === "sqlite" ||
-    process.env.TEST_DATABASE_URL?.startsWith("file:");
+  const isSqlite = checkIsSqlite();
 
   if (isSqlite) {
     if (process.env.TEST_DATABASE_URL) {

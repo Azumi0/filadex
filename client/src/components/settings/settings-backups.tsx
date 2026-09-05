@@ -21,20 +21,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
-import { Download, Trash2, Database, Save, HardDrive, RotateCw, Loader2 } from "lucide-react";
+import { Download, Database, Save, HardDrive, RotateCw, Loader2 } from "lucide-react";
 import type { BackupSettings } from "@shared/schema";
 
 interface BackupFile {
@@ -129,25 +118,6 @@ export function BackupsSettings() {
     },
   });
 
-  // Delete backup mutation
-  const deleteBackupMutation = useMutation({
-    mutationFn: (filename: string) =>
-      apiRequest(`/api/admin/backups/${encodeURIComponent(filename)}`, { method: "DELETE" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/backups"] });
-      toast({
-        title: t("settings.backups.deleteSuccess"),
-      });
-    },
-    onError: () => {
-      toast({
-        title: t("common.error"),
-        description: t("settings.backups.deleteError"),
-        variant: "destructive",
-      });
-    },
-  });
-
   // Stream live snapshot
   const handleStreamSnapshot = async () => {
     setIsStreaming(true);
@@ -197,7 +167,7 @@ export function BackupsSettings() {
     } catch {
       toast({
         title: t("common.error"),
-        description: t("settings.backups.createdError"),
+        description: t("settings.backups.downloadError"),
         variant: "destructive",
       });
     }
@@ -296,6 +266,9 @@ export function BackupsSettings() {
                     }))
                   }
                 />
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.backups.scheduleCard.retentionHelp")}
+                </p>
               </div>
             </div>
           )}
@@ -335,7 +308,7 @@ export function BackupsSettings() {
               ) : (
                 <HardDrive className="h-4 w-4" />
               )}
-              {t("settings.backups.streamSnapshot")}
+              {isStreaming ? t("settings.backups.streamingSnapshot") : t("settings.backups.streamSnapshot")}
             </Button>
             <Button
               onClick={() => createBackupMutation.mutate()}
@@ -347,7 +320,7 @@ export function BackupsSettings() {
               ) : (
                 <Save className="h-4 w-4" />
               )}
-              {t("settings.backups.createBackup")}
+              {createBackupMutation.isPending ? t("settings.backups.creatingBackup") : t("settings.backups.createBackup")}
             </Button>
           </div>
         </CardHeader>
@@ -389,34 +362,6 @@ export function BackupsSettings() {
                         >
                           <Download className="h-4 w-4" />
                         </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              title={t("settings.backups.table.delete")}
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>{t("settings.backups.table.delete")}</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                {t("settings.backups.confirmDelete")}
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => deleteBackupMutation.mutate(b.filename)}
-                                className="bg-destructive hover:bg-destructive/90"
-                              >
-                                {t("common.delete")}
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
                       </TableCell>
                     </TableRow>
                   ))}

@@ -5,21 +5,31 @@ import * as schema from "@shared/schema";
 import fs from "node:fs";
 import path from "node:path";
 
-if (!process.env.DATABASE_URL) {
+export function normalizeSqliteUrl(url: string): string {
+  if (url.startsWith("sqlite:")) {
+    return url.replace(/^sqlite:/, "file:");
+  }
+  return url;
+}
+
+const rawUrl = process.env.DATABASE_URL || (process.env.NODE_ENV === "test" ? "file::memory:" : "");
+if (!rawUrl) {
   throw new Error(
     "DATABASE_URL must be set. Did you forget to provision a database?",
   );
 }
 
-if (process.env.DATABASE_URL.startsWith("file:") || process.env.DATABASE_URL.startsWith("sqlite:")) {
-  const filePath = process.env.DATABASE_URL.replace(/^(file|sqlite):\/\//, "/").replace(/^(file|sqlite):/, "");
+const dbUrl = normalizeSqliteUrl(rawUrl);
+
+if (dbUrl.startsWith("file:")) {
+  const filePath = dbUrl.replace(/^file:\/\//, "/").replace(/^file:/, "");
   const dir = path.dirname(filePath);
   if (dir && !fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }
 
-export const client = createClient({ url: process.env.DATABASE_URL });
+export const client = createClient({ url: dbUrl });
 
 /**
  * SQLite connections set three pragmas on connection:

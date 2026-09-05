@@ -347,9 +347,7 @@ const translations = {
       streamSnapshot: 'Live-Snapshot herunterladen',
       streamingSnapshot: 'Snapshot wird heruntergeladen...',
       streamError: 'Fehler beim Herunterladen des Snapshots',
-      deleteSuccess: 'Backup gelöscht',
-      deleteError: 'Fehler beim Löschen des Backups',
-      confirmDelete: 'Möchten Sie dieses Backup wirklich löschen?',
+      downloadError: 'Fehler beim Herunterladen des Backups',
       table: {
         filename: 'Dateiname',
         size: 'Größe',
@@ -357,7 +355,6 @@ const translations = {
         actions: 'Aktionen',
         empty: 'Keine Backups auf der Festplatte gefunden',
         download: 'Herunterladen',
-        delete: 'Löschen',
       },
       scheduleCard: {
         title: 'Automatische Backups',

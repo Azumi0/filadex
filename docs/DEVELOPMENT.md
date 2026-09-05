@@ -244,12 +244,9 @@ migration.
 
 ### Running Migrations
 
-`npm run db:migrate` (`scripts/migrate.ts`) is the only migration entry point,
-and `docker-entrypoint.sh` runs it on every container start. It handles three
-cases: a fresh database is created from the generated migrations; a database
-already on them gets whatever is new; and a pre-Drizzle installation is first
-caught up on the frozen scripts in `migrations/legacy` (see the README there)
-and then recorded at the baseline.
+`npm run db:migrate` (`scripts/migrate.ts`) is a development dispatcher into `scripts/migrate.pg.ts` or `scripts/migrate.sqlite.ts` based on `DATABASE_URL`. In production, `docker-entrypoint.sh` executes the bundled migrator (`dist/migrate.pg.js` or `dist/migrate.sqlite.js`) directly on container start.
+
+On PostgreSQL, migration handles three cases: a fresh database is created from the generated migrations; a database already on them gets whatever is new; and a pre-Drizzle installation is first caught up on the frozen scripts in `migrations/legacy` (see the README there) and then recorded at the baseline. SQLite has no legacy chain and applies migrations directly from `migrations/sqlite`.
 
 To check that an existing installation can still upgrade:
 
@@ -281,7 +278,7 @@ Filadex supports two database engines:
 - **PostgreSQL** (default, recommended for multi-user deployments):
   Configured via `DATABASE_URL=postgres://user:password@host:port/database` or individual variables (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `PGHOST`, `PGPORT`).
 - **SQLite** (single-user install option, no external database server needed):
-  Configured via `DATABASE_URL=file:/path/to/filadex.db` (or `file:./dev.db` for local development).
+  Configured via `DATABASE_URL=file:/path/to/filadex.db` (or `file:./dev.db` for local development). There is **no migration path** between the two engines in either direction. SQLite connections set WAL mode, producing `-wal` and `-shm` companion files beside the database file, which is why external backups should copy `/data` rather than naming one file.
   When running on SQLite, an admin-only **DB Backups** settings panel is available to create and download snapshots (using SQLite `VACUUM INTO`) and configure automated recurring backups with automatic pruning.
 
 ## Code Style

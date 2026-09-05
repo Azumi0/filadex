@@ -88,7 +88,7 @@ The application will be available at http://localhost:5000
 
 ### Option 2: Docker Deployment
 
-Choose between PostgreSQL (multi-user default) and SQLite (single-user):
+Choose between PostgreSQL (multi-user default) and SQLite (single-user). Note that there is **no migration path** between the two engines in either direction — a deployer picks once:
 
 #### Variant A: PostgreSQL (Default)
 
@@ -116,7 +116,7 @@ Choose between PostgreSQL (multi-user default) and SQLite (single-user):
    docker-compose up -d
    ```
 
-Database files and backups are persisted inside the `filadex_data` volume at `/data`.
+Database files and backups are persisted inside the `filadex_data` volume at `/data`. SQLite runs with write-ahead logging (WAL), producing `-wal` and `-shm` files beside the database, which is why external backups should copy the entire `/data` directory rather than copying a single `.db` file.
 
 The application will be available at http://localhost:8080.
 

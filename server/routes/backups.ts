@@ -20,22 +20,43 @@ export function getBackupDir(): string {
   return path.resolve(process.cwd(), "data", "backups");
 }
 
-export function pruneBackups(backupDir: string, retentionCount: number): void {
-  if (!fs.existsSync(backupDir)) return;
+export interface BackupFileInfo {
+  filename: string;
+  fullPath: string;
+  size: number;
+  createdAt: string;
+  mtime: number;
+}
+
+export function listBackupFiles(backupDir: string): BackupFileInfo[] {
+  if (!fs.existsSync(backupDir)) return [];
   const files = fs.readdirSync(backupDir).filter((f) => f.endsWith(".db") || f.endsWith(".sqlite"));
-  const withStats = files.map((file) => {
-    const fullPath = path.join(backupDir, file);
-    try {
-      return { file, fullPath, mtime: fs.statSync(fullPath).mtimeMs };
-    } catch {
-      return null;
-    }
-  }).filter((x): x is { file: string; fullPath: string; mtime: number } => x !== null);
+  const backups = files
+    .map((file) => {
+      const fullPath = path.join(backupDir, file);
+      try {
+        const stat = fs.statSync(fullPath);
+        return {
+          filename: file,
+          fullPath,
+          size: stat.size,
+          createdAt: stat.mtime.toISOString(),
+          mtime: stat.mtimeMs,
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter((item): item is BackupFileInfo => item !== null);
 
-  withStats.sort((a, b) => b.mtime - a.mtime); // newest first
+  backups.sort((a, b) => b.mtime - a.mtime); // newest first
+  return backups;
+}
 
-  if (withStats.length > retentionCount) {
-    const toDelete = withStats.slice(retentionCount);
+export function pruneBackups(backupDir: string, retentionCount: number): void {
+  const backups = listBackupFiles(backupDir);
+  if (backups.length > retentionCount) {
+    const toDelete = backups.slice(retentionCount);
     for (const item of toDelete) {
       try {
         fs.unlinkSync(item.fullPath);
@@ -98,7 +119,7 @@ function requireSqliteDialect(_req: Request, res: Response, next: NextFunction) 
 
 export function registerBackupRoutes(app: Express): void {
   // System database dialect information (open to any authenticated or client query)
-  app.get("/api/system/database", (_req: Request, res: Response) => {
+  app.get("/api/system/database", authenticate, (_req: Request, res: Response) => {
     res.json({ dialect: storage.getDialect() });
   });
 
@@ -144,25 +165,11 @@ export function registerBackupRoutes(app: Express): void {
   app.get("/api/admin/backups", authenticate, isAdmin, requireSqliteDialect, async (_req: Request, res: Response) => {
     try {
       const backupDir = getBackupDir();
-      if (!fs.existsSync(backupDir)) {
-        return res.json([]);
-      }
-      const files = fs.readdirSync(backupDir).filter((f) => f.endsWith(".db") || f.endsWith(".sqlite"));
-      const backups = files.map((file) => {
-        const fullPath = path.join(backupDir, file);
-        try {
-          const stat = fs.statSync(fullPath);
-          return {
-            filename: file,
-            size: stat.size,
-            createdAt: stat.mtime.toISOString(),
-          };
-        } catch {
-          return null;
-        }
-      }).filter((item): item is { filename: string; size: number; createdAt: string } => item !== null);
-
-      backups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const backups = listBackupFiles(backupDir).map(({ filename, size, createdAt }) => ({
+        filename,
+        size,
+        createdAt,
+      }));
       res.json(backups);
     } catch (error) {
       logger.error("Error listing backups:", error);
@@ -223,24 +230,5 @@ export function registerBackupRoutes(app: Express): void {
     }
 
     res.download(filePath, path.basename(filePath));
-  });
-
-  // Delete an existing backup file (admin only, SQLite only)
-  app.delete("/api/admin/backups/:filename", authenticate, isAdmin, requireSqliteDialect, async (req: Request, res: Response) => {
-    const filePath = resolveBackupPath(req.params.filename);
-    if (!filePath) {
-      return res.status(400).json({ message: "Invalid backup filename" });
-    }
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ message: "Backup file not found" });
-    }
-
-    try {
-      fs.unlinkSync(filePath);
-      res.json({ success: true });
-    } catch (error) {
-      logger.error("Error deleting backup file:", error);
-      res.status(500).json({ message: "Failed to delete backup file" });
-    }
   });
 }
