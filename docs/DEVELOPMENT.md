@@ -19,7 +19,7 @@ This guide provides detailed information for developers working on Filadex.
 Before you begin, ensure you have the following installed:
 
 - **Node.js** v16 or higher ([Download](https://nodejs.org/))
-- **PostgreSQL** v12 or higher ([Download](https://www.postgresql.org/download/))
+- **PostgreSQL** v12 or higher ([Download](https://www.postgresql.org/download/)) or **SQLite** (built-in; no external server needed)
 - **npm** (comes with Node.js) or **yarn**
 - **Git**
 
@@ -51,15 +51,19 @@ Copy the example environment file and configure it:
 cp .env.example .env
 ```
 
-Edit `.env` and update the database connection string:
-
+Edit `.env` and set the database connection string:
+ 
 ```env
+# For PostgreSQL:
 DATABASE_URL=postgres://username:password@localhost:5432/filadex
+
+# Or for SQLite:
+# DATABASE_URL=file:./dev.db
 ```
 
 ### 4. Set Up Database
 
-Create a PostgreSQL database:
+If using PostgreSQL, create the database first:
 
 ```bash
 createdb filadex
@@ -67,18 +71,20 @@ createdb filadex
 # psql -U postgres -c "CREATE DATABASE filadex;"
 ```
 
-Push the database schema:
+Apply database migrations:
 
 ```bash
-npm run db:push
+npm run db:migrate
 ```
 
-(Optional) Initialize with sample data:
+(Optional) Initialize starter selection options or demo fixtures:
 
 ```bash
+# Starter dropdown options (manufacturers, materials, colors):
 npm run db:init
-# Or set INIT_SAMPLE_DATA=true in .env and run:
-# INIT_SAMPLE_DATA=true node init-data.js
+
+# Or full demo dataset:
+npm run db:seed
 ```
 
 ### 5. Start Development Server
@@ -232,22 +238,27 @@ against a fresh install. It needs Docker, and CI runs it on every pull request.
 
 ### Initializing Data
 
-Initialize the database with sample data:
+Initialize the database with starter or demo fixtures:
 
 ```bash
+# Basic starter options (manufacturers, materials, colors, diameters, locations)
 npm run db:init
-# or
-node init-data.js
+
+# Full demo dataset (refuses if users already exist)
+npm run db:seed
 ```
 
-Set `INIT_SAMPLE_DATA=true` in `.env` to include sample filaments.
+Set `INIT_SAMPLE_DATA=true` in `.env` or container environment to automatically seed starter data on fresh installs.
 
-### Database Connection
+### Database Engines & Connection
 
-The application uses PostgreSQL. Connection is configured via:
+Filadex supports two database engines:
 
-- `DATABASE_URL` (recommended): Full connection string
-- Individual variables: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `PGHOST`, `PGPORT`
+- **PostgreSQL** (default, recommended for multi-user deployments):
+  Configured via `DATABASE_URL=postgres://user:password@host:port/database` or individual variables (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `PGHOST`, `PGPORT`).
+- **SQLite** (single-user install option, no external database server needed):
+  Configured via `DATABASE_URL=file:/path/to/filadex.db` (or `file:./dev.db` for local development).
+  When running on SQLite, an admin-only **DB Backups** settings panel is available to create and download snapshots (using SQLite `VACUUM INTO`) and configure automated recurring backups with automatic pruning.
 
 ## Code Style
 
@@ -385,14 +396,18 @@ This runs TypeScript compiler without emitting files.
 **Error**: `DATABASE_URL must be set`
 
 - Ensure `.env` file exists and contains `DATABASE_URL`
+- For PostgreSQL: verify connection string format: `postgres://user:password@host:port/database`
+- For SQLite: verify file path format: `file:/path/to/filadex.db` or `file:./dev.db`
+
+**Error**: `Connection refused` (PostgreSQL)
+
 - Check PostgreSQL is running: `pg_isready` or `psql -U postgres`
-- Verify connection string format: `postgres://user:password@host:port/database`
-
-**Error**: `Connection refused`
-
-- Check PostgreSQL is running
 - Verify host and port in connection string
 - Check firewall settings
+
+**Error**: SQLite directory or permission error
+
+- Ensure the directory containing the SQLite database file exists and is writable by the running process (or mounted container volume).
 
 ### Port Already in Use
 
