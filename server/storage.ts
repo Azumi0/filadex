@@ -626,9 +626,15 @@ export class DatabaseStorage implements IStorage {
   async getCommunityFilamentCacheStatus(): Promise<CommunityFilamentCacheStatus> {
     const [row] = await db.select({
       count: sql<number>`count(*)`,
-      lastUpdated: sql<string | null>`max(${communityFilamentCache.updatedAt})`,
+      lastUpdated: sql<string | number | null>`max(${communityFilamentCache.updatedAt})`,
     }).from(communityFilamentCache);
-    return { count: Number(row?.count ?? 0), lastUpdated: row?.lastUpdated ?? null };
+    let lastUpdated: string | null = null;
+    if (typeof row?.lastUpdated === "number") {
+      lastUpdated = new Date(row.lastUpdated).toISOString().replace("T", " ").slice(0, 19);
+    } else if (typeof row?.lastUpdated === "string") {
+      lastUpdated = row.lastUpdated;
+    }
+    return { count: Number(row?.count ?? 0), lastUpdated };
   }
 
   async getEmailSettings(): Promise<EmailSettings | undefined> {
