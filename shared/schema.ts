@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { table, t, foreignKey, index, uniqueIndex } from "./columns";
+import { table, t, foreignKey, index, uniqueIndex, nullableIndexKey } from "@shared/columns";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -310,12 +310,14 @@ export const materials = table("materials", {
   // users_username_lower_idx.
   uniqueIndex("materials_global_name_lower_idx")
     .on(sql`lower(${table.name})`).where(sql`${table.userId} IS NULL`),
-  // `coalesce(user_id, 0)` rather than a bare `user_id`: the WHERE clause means
-  // it is only ever `user_id` for rows this index covers, but drizzle-kit 0.30's
-  // introspection cannot round-trip an index whose key list mixes a bare column
-  // with an expression, and the coalesce makes both keys expressions.
+  // nullableIndexKey wraps user_id in `coalesce(user_id, 0)` on Postgres (because
+  // drizzle-kit 0.30's introspection cannot round-trip an index whose key list
+  // mixes a bare column with an expression) and leaves it as a bare column on
+  // SQLite (where drizzle-kit splits index keys on commas ignoring parentheses).
+  // The index is partial on WHERE user_id IS NOT NULL, so the bare column is
+  // semantically identical. See docs/adr/0004.
   uniqueIndex("materials_user_name_lower_idx")
-    .on(sql`coalesce(${table.userId}, 0)`, sql`lower(${table.name})`).where(sql`${table.userId} IS NOT NULL`),
+    .on(nullableIndexKey(table.userId), sql`lower(${table.name})`).where(sql`${table.userId} IS NOT NULL`),
 ]);
 
 export const colors = table("colors", {
