@@ -46,28 +46,37 @@ async function seed() {
 
   // One transaction, so a failure leaves nothing half-seeded.
   await db.transaction(async (tx) => {
-    const [admin, alice, bob, unverified] = await tx.insert(users).values([
-    {
-      username: "admin", password, role: "admin", isAdmin: true,
-      emailVerified: true, forceChangePassword: false, lastLogin: daysAgo(1),
-    },
-    {
-      username: "alice", email: "alice@example.com", password, role: "user", isAdmin: false,
-      emailVerified: true, forceChangePassword: false, language: "en", currency: "EUR",
-      temperatureUnit: "C", lastLogin: daysAgo(2), lowStockThresholdPercent: 20,
-      themeVariant: "tint", themePrimary: "#00AAFF", themeAppearance: "light", themeRadius: "1.25",
-    },
-    {
-      username: "bob", email: "bob@example.com", password, role: "user", isAdmin: false,
-      emailVerified: true, forceChangePassword: true, language: "de", currency: "PLN",
-      temperatureUnit: "F", notifyLowStock: false, dryingReminderDays: 14,
-    },
-    {
-      username: "carol", email: "carol@example.com", password, role: "user", isAdmin: false,
-      emailVerified: false, forceChangePassword: false,
-      emailVerificationToken: "seed-verification-token", emailVerificationExpires: daysAgo(-1),
-    },
-  ]).returning();
+    // Raw SQL, not tx.insert, for the same reason the materials insert below is:
+    // verify-upgrade.ts runs this script against a pre-migration database, and
+    // drizzle spells every insert with the full column list - it would reference
+    // users.username_folded before migration 0005 adds it. Leaving the column
+    // out is also what exercises 0005's backfill, which is where the folded
+    // value for an already-existing row is supposed to come from.
+    //
+    // DEFAULT rather than NULL wherever the row does not set a column, so each
+    // account keeps the column defaults it had when this was a drizzle insert.
+    const [admin, alice, bob, unverified] = (await tx.execute(sql`
+      INSERT INTO users
+        (username, email, password, role, is_admin, email_verified, force_change_password,
+         language, currency, temperature_unit, last_login, low_stock_threshold_percent,
+         notify_low_stock, drying_reminder_days, theme_variant, theme_primary,
+         theme_appearance, theme_radius, email_verification_token, email_verification_expires)
+      VALUES
+        ('admin', DEFAULT, ${password}, 'admin', true, true, false,
+         DEFAULT, DEFAULT, DEFAULT, ${daysAgo(1)}, DEFAULT,
+         DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT),
+        ('alice', 'alice@example.com', ${password}, 'user', false, true, false,
+         'en', 'EUR', 'C', ${daysAgo(2)}, 20,
+         DEFAULT, DEFAULT, 'tint', '#00AAFF', 'light', '1.25', DEFAULT, DEFAULT),
+        ('bob', 'bob@example.com', ${password}, 'user', false, true, true,
+         'de', 'PLN', 'F', DEFAULT, DEFAULT,
+         false, 14, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT),
+        ('carol', 'carol@example.com', ${password}, 'user', false, false, false,
+         DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT,
+         DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT,
+         'seed-verification-token', ${daysAgo(-1)})
+      RETURNING id
+    `)).rows as Array<{ id: number }>;
 
   await tx.insert(manufacturers).values([
     { name: "Bambu Lab", sortOrder: 1 },

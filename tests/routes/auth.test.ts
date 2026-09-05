@@ -117,6 +117,78 @@ describe("POST /api/auth/register", () => {
     expect(mailbox).toHaveLength(0);
   });
 
+  // The two encodings of `ü` - U+00FC, and `u` + U+0308 - render identically and
+  // differ only in how the keyboard produced them. Everything below is one
+  // account, or the person who registered with one spelling could not log in
+  // with the other and a second account could take their name.
+  describe("a username with diacritics", () => {
+    const composed = "m\u00FCller";       // müller, precomposed
+    const decomposed = "mu\u0308ller";    // müller, u + combining diaeresis
+
+    it("registers, and is stored in the spelling the user typed", async () => {
+      const cookie = await registerAndVerify(app, { ...alice, username: composed });
+
+      const me = await request(app).get("/api/auth/me").set("Cookie", cookie);
+      expect(me.body.username).toBe(composed);
+    });
+
+    it("logs in whichever way the name is spelled or capitalised", async () => {
+      await registerAndVerify(app, { ...alice, username: composed });
+
+      for (const typed of [composed, decomposed, "M\u00DCLLER", "Mu\u0308LLER"]) {
+        await expect(loginAs(app, typed, alice.password)).resolves.toBeTruthy();
+      }
+    });
+
+    it.each([
+      ["the other Unicode spelling", decomposed],
+      ["a different capitalisation", "M\u00FCller"],
+    ])("refuses a second account under %s", async (_label, taken) => {
+      await registerAndVerify(app, { ...alice, username: composed });
+
+      const response = await request(app)
+        .post("/api/auth/register")
+        .send({ username: taken, email: "someone-else@example.com", password: alice.password });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe("Username already exists");
+    });
+
+    it("reports the taken name as unavailable however it is spelled", async () => {
+      await registerAndVerify(app, { ...alice, username: composed });
+
+      for (const typed of [composed, decomposed, "M\u00DCLLER"]) {
+        const response = await request(app).get("/api/auth/check-username").query({ username: typed });
+        expect(response.body).toEqual({ available: false });
+      }
+    });
+  });
+
+  // Latin script, not \p{L}: Cyrillic \u0430 renders as `a`, so `\u0430dmin` beside
+  // `admin` would be two accounts nobody can tell apart - including on the
+  // public sharing page, which needs no login to view.
+  it.each([
+    ["a Cyrillic lookalike", "\u0430dmin"],
+    ["Greek", "\u03B5\u03BB\u03BB\u03AC\u03B4\u03B1"],
+    ["Han", "\u65E5\u672C\u8A9E"],
+  ])("refuses %s", async (_label, username) => {
+    const response = await request(app).post("/api/auth/register").send({ ...alice, username });
+
+    expect(response.status).toBe(400);
+    expect(response.body.message).toBe(
+      "Username may only contain letters, numbers, underscores, and hyphens",
+    );
+  });
+
+  it("counts characters, not code points, against the 30-character limit", async () => {
+    // 30 decomposed umlauts are 60 code points before normalisation.
+    const thirty = "u\u0308".repeat(30);
+
+    await expect(
+      registerAndVerify(app, { ...alice, username: thirty }),
+    ).resolves.toBeTruthy();
+  });
+
   it("defaults a self-registered account to the non-admin user role", async () => {
     const cookie = await registerAndVerify(app, alice);
 
