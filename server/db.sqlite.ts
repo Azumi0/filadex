@@ -36,8 +36,13 @@ await client.executeMultiple(`
   PRAGMA foreign_keys = ON;
 `);
 
+export const dialect = "sqlite" as const;
 export const db = drizzle(client, { schema });
 export async function closeDb(): Promise<void> {
   client.close();
+}
+export async function vacuumBackup(destinationPath: string): Promise<void> {
+  const escaped = destinationPath.replace(/'/g, "''");
+  await client.execute(`VACUUM INTO '${escaped}'`);
 }
 

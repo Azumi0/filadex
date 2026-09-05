@@ -134,3 +134,14 @@ export async function resetDb() {
     await (db as any).execute(truncateAll);
   }
 }
+
+export const dialect = isSqlite ? ("sqlite" as const) : ("postgres" as const);
+
+export async function vacuumBackup(destinationPath: string): Promise<void> {
+  if (isSqlite && client) {
+    const escaped = destinationPath.replace(/'/g, "''");
+    await client.execute(`VACUUM INTO '${escaped}'`);
+  } else {
+    throw new Error("Database backups are only supported on SQLite installations");
+  }
+}

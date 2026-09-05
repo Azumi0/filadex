@@ -16,8 +16,9 @@ import {
   catalogRequests, type CatalogRequest,
   communityFilamentCache, type CommunityFilamentCacheEntry,
   emailSettings, type EmailSettings,
+  backupSettings, type BackupSettings,
 } from "@shared/schema";
-import { db } from "@db";
+import { db, dialect, vacuumBackup } from "@db";
 import { eq, sql, and, or, inArray, desc, isNull, count } from "drizzle-orm";
 import { logger } from "./utils/logger";
 import { containsIgnoreCase, eqIgnoreCase } from "@db/predicates";
@@ -74,6 +75,7 @@ export type UserChanges = {
 };
 
 export type EmailSettingsChanges = Partial<Omit<typeof emailSettings.$inferInsert, "id" | "updatedAt">>;
+export type BackupSettingsChanges = Partial<Omit<typeof backupSettings.$inferInsert, "id" | "updatedAt">>;
 
 export type NewCommunityFilament = typeof communityFilamentCache.$inferInsert;
 
@@ -306,6 +308,12 @@ export interface IStorage {
   getEmailSettings(): Promise<EmailSettings | undefined>;
   /** Writes the settings row a migration seeds; undefined if it is not there. */
   updateEmailSettings(changes: EmailSettingsChanges): Promise<EmailSettings | undefined>;
+
+  // System & Backups
+  getDialect(): "postgres" | "sqlite";
+  getBackupSettings(): Promise<BackupSettings | undefined>;
+  updateBackupSettings(changes: BackupSettingsChanges): Promise<BackupSettings>;
+  createBackup(destinationPath: string): Promise<void>;
 
   // Sharing settings
   getUserSharing(userId: number): Promise<UserSharing[]>;
@@ -648,6 +656,34 @@ export class DatabaseStorage implements IStorage {
       .where(eq(emailSettings.id, 1))
       .returning();
     return updated || undefined;
+  }
+
+  getDialect(): "postgres" | "sqlite" {
+    return dialect;
+  }
+
+  async getBackupSettings(): Promise<BackupSettings | undefined> {
+    const [settings] = await db.select().from(backupSettings).where(eq(backupSettings.id, 1));
+    return settings || undefined;
+  }
+
+  async updateBackupSettings(changes: BackupSettingsChanges): Promise<BackupSettings> {
+    const existing = await this.getBackupSettings();
+    if (!existing) {
+      const [inserted] = await db.insert(backupSettings)
+        .values({ id: 1, ...changes, updatedAt: new Date() })
+        .returning();
+      return inserted;
+    }
+    const [updated] = await db.update(backupSettings)
+      .set({ ...changes, updatedAt: new Date() })
+      .where(eq(backupSettings.id, 1))
+      .returning();
+    return updated;
+  }
+
+  async createBackup(destinationPath: string): Promise<void> {
+    await vacuumBackup(destinationPath);
   }
 
   async getUserTheme(userId: number): Promise<UserTheme | undefined> {

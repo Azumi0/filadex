@@ -465,6 +465,26 @@ export const updateEmailSettingsSchema = createInsertSchema(emailSettings).omit(
 export type UpdateEmailSettings = z.infer<typeof updateEmailSettingsSchema>;
 export type EmailSettings = typeof emailSettings.$inferSelect;
 
+// Singleton row (id fixed to 1) holding SQLite automated backup configuration
+export const backupSettings = table("backup_settings", {
+  id: t.int("id").primaryKey().default(1),
+  enabled: t.bool("enabled").default(false),
+  schedule: t.text("schedule").notNull().default("off"), // 'off' | 'daily' | 'weekly'
+  time: t.text("time").notNull().default("02:00"), // 'HH:MM' 24h format
+  dayOfWeek: t.int("day_of_week").default(1), // 1 = Monday ... 7 = Sunday
+  retentionCount: t.int("retention_count").notNull().default(7), // keep last N backups
+  lastBackupAt: t.timestamp("last_backup_at"),
+  updatedAt: t.timestamp("updated_at").defaultNow(),
+});
+
+export const updateBackupSettingsSchema = createInsertSchema(backupSettings).omit({
+  id: true,
+  updatedAt: true,
+});
+
+export type UpdateBackupSettings = z.infer<typeof updateBackupSettingsSchema>;
+export type BackupSettings = typeof backupSettings.$inferSelect;
+
 // User-submitted requests to add a new catalog entry (manufacturer/material/
 // color/diameter/storage location); reviewed by an admin before the entry
 // becomes real. Keeps the shared catalog tables admin-only while still
