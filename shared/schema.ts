@@ -285,12 +285,38 @@ export const manufacturers = table("manufacturers", {
 
 export const materials = table("materials", {
   id: t.pk("id"),
-  name: t.text("name").notNull().unique("materials_name_key"),
+  name: t.text("name").notNull(),
+  userId: t.fk("user_id"), // NULL = Global Catalog; set = that user's Personal Catalog
   sortOrder: t.int("sort_order").default(999),
   density: t.numeric("density"), // g/cm^3; lets weight<->length conversions work without an external lookup
   isHygroscopic: t.bool("is_hygroscopic").default(false), // drives the drying-reminder email check
+  // Set by the owner to silence the "needs attention" prompt the client shows
+  // on a Personal Catalog row with no density and no hygroscopic flag. Without
+  // it, a material that genuinely has neither is indistinguishable from one
+  // auto-registration created and nobody ever looked at, so the prompt would
+  // stay on that row forever with nothing the owner could do about it.
+  attentionDismissed: t.bool("attention_dismissed").default(false).notNull(),
   createdAt: t.timestamptz("created_at").defaultNow().notNull()
-});
+}, (table) => [
+  foreignKey({
+    name: "materials_user_id_fkey",
+    columns: [table.userId],
+    foreignColumns: [users.id],
+  }).onDelete("cascade"),
+  // Unique within the Global Catalog, and unique within each Personal Catalog,
+  // case-insensitively. Two partial indexes rather than one on
+  // (user_id, lower(name)) because SQL NULLs never conflict with each other, so
+  // a single index would let the Global Catalog hold duplicates. Precedent:
+  // users_username_lower_idx.
+  uniqueIndex("materials_global_name_lower_idx")
+    .on(sql`lower(${table.name})`).where(sql`${table.userId} IS NULL`),
+  // `coalesce(user_id, 0)` rather than a bare `user_id`: the WHERE clause means
+  // it is only ever `user_id` for rows this index covers, but drizzle-kit 0.30's
+  // introspection cannot round-trip an index whose key list mixes a bare column
+  // with an expression, and the coalesce makes both keys expressions.
+  uniqueIndex("materials_user_name_lower_idx")
+    .on(sql`coalesce(${table.userId}, 0)`, sql`lower(${table.name})`).where(sql`${table.userId} IS NOT NULL`),
+]);
 
 export const colors = table("colors", {
   id: t.pk("id"),
@@ -323,6 +349,12 @@ export const insertMaterialSchema = createInsertSchema(materials).omit({
   id: true,
   createdAt: true,
   sortOrder: true,
+  // Direct creation always targets the Global Catalog; a Personal Catalog entry
+  // is only ever auto-registered from a declared material (see storage.ts).
+  userId: true,
+  // Only ever set after the fact, by the owner of the row it is prompting - and
+  // a Global Catalog row is never prompted about in the first place.
+  attentionDismissed: true,
 });
 
 export const insertColorSchema = createInsertSchema(colors).omit({
@@ -352,6 +384,25 @@ export type Manufacturer = typeof manufacturers.$inferSelect;
 
 export type InsertMaterial = z.infer<typeof insertMaterialSchema>;
 export type Material = typeof materials.$inferSelect;
+
+// The only fields an owner (or an admin, on any row) can fill in after the
+// fact - name and scoping are fixed at creation. This is what turns an
+// auto-registered Personal Catalog row into one that actually does something:
+// see docs/adr/0003-per-user-material-catalog.md.
+//
+// Written out directly rather than derived from createInsertSchema: unlike
+// POST /api/materials (admin-only), PUT /api/materials/:id is reachable by any
+// owner of a Personal Catalog row, so density needs an actual format check -
+// createInsertSchema otherwise maps the numeric column to a bare, unrefined
+// string, and an unparseable value would reach Postgres as a raw
+// `UPDATE ... SET density = '...'` and fail as an unhandled 500.
+export const updateMaterialSchema = z.object({
+  density: z.string().regex(/^\d+(\.\d+)?$/, "Density must be a positive number").nullable().optional(),
+  isHygroscopic: z.boolean().nullable().optional(),
+  attentionDismissed: z.boolean().optional(),
+});
+
+export type UpdateMaterial = z.infer<typeof updateMaterialSchema>;
 
 export type InsertColor = z.infer<typeof insertColorSchema>;
 export type Color = typeof colors.$inferSelect;

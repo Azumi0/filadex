@@ -18,6 +18,7 @@ import { lastMailTo, mailbox } from "../helpers/mailbox";
 let app: Express;
 let adminCookie: string;
 let aliceCookie: string;
+let aliceId: number;
 
 // Mock credentials for a throwaway test database - not a real login anywhere, so
 // the password below is safe to keep in the repository (hence the ggignore tag).
@@ -28,6 +29,7 @@ beforeEach(async () => {
   await initializeAdminUser();
   adminCookie = await loginAs(app, "admin", "admin");
   aliceCookie = await registerAndVerify(app, alice);
+  aliceId = (await request(app).get("/api/auth/me").set("Cookie", aliceCookie)).body.id;
 });
 
 /** Submits a request as Alice and returns the created row. */
@@ -183,7 +185,7 @@ describe("POST /api/catalog-requests/:id/approve", () => {
     expect(response.body).toMatchObject({ status: "approved", reviewedBy: 1 });
     expect(response.body.reviewedAt).not.toBeNull();
 
-    const materials = await storage.getMaterials();
+    const materials = await storage.getMaterials(aliceId);
     expect(materials.map((m) => m.name)).toContain("PCTG");
   });
 
@@ -254,7 +256,7 @@ describe("POST /api/catalog-requests/:id/reject", () => {
       reviewedBy: 1,
     });
 
-    const materials = await storage.getMaterials();
+    const materials = await storage.getMaterials(aliceId);
     expect(materials.map((m) => m.name)).not.toContain("PCTG");
   });
 

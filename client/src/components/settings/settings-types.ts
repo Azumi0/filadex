@@ -23,8 +23,14 @@ export interface Manufacturer {
 export interface Material {
   id: number;
   name: string;
+  // null = Global Catalog; set = the owning user's Personal Catalog entry.
+  userId: number | null;
   density: string | null;
   isHygroscopic: boolean | null;
+  // Set once the owner has answered the "needs attention" prompt, so a material
+  // that genuinely has no density and genuinely is not hygroscopic stops being
+  // flagged. Always false on a Global Catalog row, which is never flagged.
+  attentionDismissed: boolean;
   createdAt: string;
 }
 

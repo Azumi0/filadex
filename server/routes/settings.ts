@@ -3,6 +3,7 @@ import { storage } from "../storage";
 import {
   insertManufacturerSchema,
   insertMaterialSchema,
+  updateMaterialSchema,
   insertColorSchema,
   insertDiameterSchema,
   insertStorageLocationSchema,
@@ -15,6 +16,8 @@ import {
 } from "@shared/schema";
 import { parseCSVLine, escapeCsvField } from "../utils/csv-parser";
 import { registerCrudSettingsRoutes, simpleNameParseLine } from "../utils/settings-crud";
+import { equalsIgnoreCase } from "../db/predicates";
+import { catalogName } from "../utils/materials";
 
 export function registerSettingsRoutes(app: Express): void {
   registerCrudSettingsRoutes<Manufacturer, { name: string }>(app, {
@@ -42,8 +45,17 @@ export function registerSettingsRoutes(app: Express): void {
     basePath: "/api/materials",
     csvFilename: "materials.csv",
     insertSchema: insertMaterialSchema,
+    // Fills in density/isHygroscopic on a row that already exists - creation
+    // stays admin-only and global (see the POST comment below), but once a
+    // declared material has auto-registered a row, the owner needs a way to
+    // make it actually do something. Same admin-or-owner rule as delete.
+    update: {
+      schema: updateMaterialSchema,
+      apply: (id, data) => storage.updateMaterial(id, data),
+    },
+    userScoped: true,
     storage: {
-      getAll: () => storage.getMaterials(),
+      getAll: (userId) => storage.getMaterials(userId),
       create: (data) => storage.createMaterial(data),
       delete: (id) => storage.deleteMaterial(id),
       updateOrder: (id, newOrder) => storage.updateMaterialOrder(id, newOrder),
@@ -67,7 +79,14 @@ export function registerSettingsRoutes(app: Express): void {
         return { kind: "create", data: { name, density, isHygroscopic } };
       },
     },
-    isInUse: (filament: Filament, item) => filament.material === item.name,
+    // The rule a create actually has to satisfy: materials_global_name_lower_idx
+    // plus the trimming storage.createMaterial applies. So a second "petg"
+    // alongside "PETG" is a 409 rather than a unique-violation 500.
+    duplicateOf: (item, data) => equalsIgnoreCase(catalogName(item.name), catalogName(data.name)),
+    // Case-insensitive and whitespace-trimmed, to agree with how a declared
+    // material resolves to a Catalog Material (storage.resolveMaterial).
+    isInUse: (filament: Filament, item) =>
+      equalsIgnoreCase(catalogName(filament.material), catalogName(item.name)),
   });
 
   registerCrudSettingsRoutes<Color, { name: string; code: string }>(app, {

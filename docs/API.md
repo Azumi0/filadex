@@ -445,7 +445,9 @@ Returns the history of remaining-percentage changes for a filament, most recent 
 
 ### Get All Materials
 
-Returns all materials.
+Returns the Global Catalog (materials belonging to no particular user) plus
+the caller's own Personal Catalog - never another user's. See
+`docs/adr/0003-per-user-material-catalog.md` for what these mean.
 
 - **URL**: `/api/materials`
 - **Method**: `GET`
@@ -458,13 +460,28 @@ Returns all materials.
     {
       "id": "number",
       "name": "string",
-      "density": "string",
-      "isHygroscopic": "boolean"
+      "userId": "number | null",
+      "density": "string | null",
+      "isHygroscopic": "boolean",
+      "attentionDismissed": "boolean"
     }
   ]
   ```
-  - `density` (g/cm³) is nullable and used to compute an estimated remaining filament length in the UI.
+  - `userId` is `null` for a Global Catalog entry, or the caller's own ID for
+    one of their Personal Catalog entries.
+  - `density` (g/cm³) is nullable and used to compute an estimated remaining
+    filament length in the UI.
   - `isHygroscopic` drives the [drying-reminder email check](#notifications) - set it for moisture-sensitive materials (PETG, Nylon/PA, PVA, ASA, etc.).
+  - There is no separate status field for "needs attention" - a client derives
+    it from the facts above: a Personal Catalog entry (`userId` set) with
+    `density: null` and `isHygroscopic: false` is exactly the state left by
+    auto-registering a declared material that resolved to nothing (see `POST
+    /api/filaments`), and is the row an owner most likely wants to fill in.
+  - `attentionDismissed` is the owner's answer to that prompt. A material can
+    genuinely have no published density and genuinely not be hygroscopic, which
+    is indistinguishable from a row nobody has looked at, so a client must treat
+    `attentionDismissed: true` as "stop flagging this". Set it through `PUT
+    /api/materials/:id`. It is always `false` on a Global Catalog entry.
 - **Error Responses**:
   - `401 Unauthorized`: Not authenticated
   - `500 Internal Server Error`: Failed to fetch materials
@@ -513,6 +530,10 @@ Creates a new material (admin only; non-admins should use the catalog request fl
 - **Error Responses**:
   - `400 Bad Request`: Validation error
   - `401 Unauthorized`: Not authenticated
+  - `409 Conflict`: The Global Catalog already holds a material of that name.
+    Names are compared case-insensitively and ignoring surrounding whitespace,
+    so `petg` conflicts with `PETG`. A Personal Catalog entry of the same name
+    does not conflict - the two catalogs are separate.
   - `500 Internal Server Error`: Failed to create material
 
 ### Delete Material
@@ -530,6 +551,47 @@ Deletes a material.
   - `401 Unauthorized`: Not authenticated
   - `404 Not Found`: Material not found
   - `500 Internal Server Error`: Failed to delete material
+
+### Update Material
+
+Fills in `density`, `isHygroscopic` and/or `attentionDismissed` on a material
+that already exists. There is no way to change `name` or move a row between
+catalogs here - both are fixed at creation.
+
+- **URL**: `/api/materials/:id`
+- **Method**: `PUT`
+- **Authentication**: Required. Sees the same Global-Catalog-plus-own-Personal-
+  Catalog scope as `GET /api/materials` - an admin does not see or edit
+  another user's Personal Catalog entries through this endpoint. Within that
+  scope, a non-admin may edit only a Personal Catalog entry they own; an admin
+  may additionally edit a Global Catalog entry.
+- **URL Parameters**:
+  - `id`: The ID of the material
+- **Request Body** (any one or more of the fields):
+  ```json
+  {
+    "density": "string",
+    "isHygroscopic": "boolean",
+    "attentionDismissed": "boolean"
+  }
+  ```
+- **Response**: `200 OK`
+  ```json
+  {
+    "id": "number",
+    "name": "string",
+    "userId": "number | null",
+    "density": "string | null",
+    "isHygroscopic": "boolean",
+    "attentionDismissed": "boolean"
+  }
+  ```
+- **Error Responses**:
+  - `400 Bad Request`: Invalid material ID, or validation error
+  - `401 Unauthorized`: Not authenticated
+  - `403 Forbidden`: Not an admin, and not the owner of this Personal Catalog entry
+  - `404 Not Found`: Material not found (also returned for another user's Personal Catalog entry)
+  - `500 Internal Server Error`: Failed to update material
 
 ## Colors
 

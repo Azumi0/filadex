@@ -2,7 +2,7 @@ import {
   filaments, type InsertFilament,
   filamentTypes, type Filament,
   manufacturers, type Manufacturer, type InsertManufacturer,
-  materials, type Material, type InsertMaterial,
+  materials, type Material, type InsertMaterial, type UpdateMaterial,
   colors, type Color, type InsertColor,
   diameters, type Diameter, type InsertDiameter,
   storageLocations, type StorageLocation, type InsertStorageLocation,
@@ -21,6 +21,7 @@ import { db } from "./db";
 import { eq, sql, and, or, inArray, desc, isNull, count } from "drizzle-orm";
 import { logger } from "./utils/logger";
 import { containsIgnoreCase, eqIgnoreCase } from "./db/predicates";
+import { catalogName } from "./utils/materials";
 
 /** What the authentication middleware needs to authorize a request. */
 export type AuthContext = {
@@ -151,6 +152,8 @@ type FilamentTypeFieldsInput = {
 // of the filament-type/spool-instance split: identical spools bought again
 // reuse the same type row instead of duplicating manufacturer/material/etc.
 async function findOrCreateFilamentType(userId: number, fields: FilamentTypeFieldsInput): Promise<number> {
+  await ensureDeclaredMaterialResolves(userId, fields.material);
+
   const manufacturer = fields.manufacturer ?? null;
   const colorCode = fields.colorCode ?? null;
   const diameter = fields.diameter ?? null;
@@ -179,6 +182,38 @@ async function findOrCreateFilamentType(userId: number, fields: FilamentTypeFiel
     printTemp,
   }).returning();
   return created.id;
+}
+
+// A material row is in scope for a user when it is global (user_id NULL) or
+// their own Personal Catalog entry. Written once here because getMaterials,
+// getHygroscopicMaterialNames and resolveMaterial all need exactly this.
+const materialInScopeFor = (userId: number) =>
+  or(isNull(materials.userId), eq(materials.userId, userId));
+
+// A declared material that resolves to no Catalog Material is registered into
+// the declaring user's Personal Catalog, so from here on every declared material
+// resolves to a row - the point of docs/adr/0003. This fires on every path
+// through find-or-create: manual create, edit, CSV import, Spoolman import. The
+// name is stored exactly as the user typed it; density and is_hygroscopic stay
+// at their neutral defaults, and phase 2 makes the row visible to fill in or
+// delete.
+async function ensureDeclaredMaterialResolves(userId: number, declared: string): Promise<void> {
+  // Stored the way the catalog matches it, so ` PETG` and `PETG ` register one
+  // row rather than two that look identical in the settings list.
+  const name = catalogName(declared);
+
+  // Blank is not a material to register. The Spool form requires one, but an
+  // import or a direct API call can leave it empty, and a nameless Catalog
+  // Material sitting in the owner's settings list helps nobody.
+  if (name === "") return;
+  if (await storage.resolveMaterial(userId, name)) return;
+
+  // Two concurrent requests declaring the same new material both resolve to
+  // nothing and both insert; the partial unique index rejects the second. Let
+  // it be a no-op rather than a 500 - the row exists either way afterwards.
+  await db.insert(materials)
+    .values({ userId, name, density: null, isHygroscopic: false })
+    .onConflictDoNothing();
 }
 
 // Selection shape shared by every filament read - the spool instance's own
@@ -246,8 +281,8 @@ export interface IStorage {
   // Scheduled notification checks
   /** Everyone who could receive a notification email. */
   getVerifiedUsers(): Promise<User[]>;
-  /** Names of the catalog materials that absorb moisture, for drying reminders. */
-  getHygroscopicMaterialNames(): Promise<string[]>;
+  /** Names of the catalog materials that absorb moisture, for drying reminders - global plus this user's. */
+  getHygroscopicMaterialNames(userId: number): Promise<string[]>;
   markLowStockNotified(filamentIds: number[]): Promise<void>;
   markDryingReminderNotified(filamentIds: number[]): Promise<void>;
 
@@ -313,11 +348,20 @@ export interface IStorage {
   updateManufacturerOrder(id: number, newOrder: number): Promise<Manufacturer | undefined>;
 
   // Material operations
-  getMaterials(): Promise<Material[]>;
+  /** The Global Catalog plus that user's Personal Catalog. */
+  getMaterials(userId: number): Promise<Material[]>;
+  /**
+   * The Catalog Material a declared material names for this user, ignoring case
+   * and checking the Personal Catalog before the Global one. `undefined` when it
+   * resolves to nothing.
+   */
+  resolveMaterial(userId: number, declared: string): Promise<Material | undefined>;
   getMaterialsByIds(ids: number[]): Promise<Material[]>;
   createMaterial(material: InsertMaterial): Promise<Material>;
   deleteMaterial(id: number): Promise<boolean>;
   updateMaterialOrder(id: number, newOrder: number): Promise<Material | undefined>;
+  /** Fills in the after-the-fact fields on an existing row - see UpdateMaterial. */
+  updateMaterial(id: number, fields: UpdateMaterial): Promise<Material | undefined>;
 
   // Color operations
   getColors(): Promise<Color[]>;
@@ -474,10 +518,27 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(users).where(eq(users.emailVerified, true));
   }
 
-  async getHygroscopicMaterialNames(): Promise<string[]> {
-    const rows = await db.select({ name: materials.name }).from(materials)
-      .where(eq(materials.isHygroscopic, true));
-    return rows.map((row) => row.name);
+  async getHygroscopicMaterialNames(userId: number): Promise<string[]> {
+    // Not filtered on is_hygroscopic in SQL: a Personal Catalog row and a Global
+    // one may hold the same name (the two partial unique indexes are disjoint),
+    // and this has to apply the same Personal-before-Global precedence
+    // resolveMaterial does. Filtering first would let the Global row's flag
+    // decide for a name the user's own row owns - so the user unchecks
+    // "hygroscopic" on their own row, keeps getting reminders, and nothing in
+    // the UI explains why.
+    const rows = await db.select({
+      name: materials.name,
+      userId: materials.userId,
+      isHygroscopic: materials.isHygroscopic,
+    }).from(materials).where(materialInScopeFor(userId));
+
+    const winners = new Map<string, { name: string; isHygroscopic: boolean | null }>();
+    for (const row of rows) {
+      const key = catalogName(row.name).toLowerCase();
+      if (row.userId !== null || !winners.has(key)) winners.set(key, row);
+    }
+
+    return [...winners.values()].filter((row) => row.isHygroscopic).map((row) => row.name);
   }
 
   async markLowStockNotified(filamentIds: number[]): Promise<void> {
@@ -859,14 +920,34 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(materials).where(inArray(materials.id, ids));
   }
 
-  async getMaterials(): Promise<Material[]> {
-    return await db.select().from(materials).orderBy(materials.sortOrder, materials.name);
+  async getMaterials(userId: number): Promise<Material[]> {
+    return await db.select().from(materials)
+      .where(materialInScopeFor(userId))
+      // The Global Catalog first, in the order an admin arranged it, then the
+      // user's own entries by name. Both default to sort_order 999, so without
+      // the first key an auto-registered personal row would land among the
+      // curated ones.
+      .orderBy(sql`${materials.userId} IS NOT NULL`, materials.sortOrder, materials.name);
+  }
+
+  async resolveMaterial(userId: number, declared: string): Promise<Material | undefined> {
+    const [row] = await db.select().from(materials)
+      .where(and(eqIgnoreCase(materials.name, catalogName(declared)), materialInScopeFor(userId)))
+      // The user's own Personal Catalog row wins when a Global one also matches.
+      .orderBy(sql`${materials.userId} IS NULL`)
+      .limit(1);
+    return row ?? undefined;
   }
 
   async createMaterial(insertMaterial: InsertMaterial): Promise<Material> {
     const [material] = await db
       .insert(materials)
-      .values(insertMaterial)
+      // Stored the way the catalog matches it, the same as an auto-registered
+      // row. A Global Catalog row named " PETG" would be one nothing resolves
+      // to: resolveMaterial compares against the trimmed declared material.
+      // This is the seam every create goes through - the Add form, CSV import
+      // and Catalog Request approval alike.
+      .values({ ...insertMaterial, name: catalogName(insertMaterial.name) })
       .returning();
     return material;
   }
@@ -883,6 +964,15 @@ export class DatabaseStorage implements IStorage {
     const [updated] = await db
       .update(materials)
       .set({ sortOrder: newOrder })
+      .where(eq(materials.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async updateMaterial(id: number, fields: UpdateMaterial): Promise<Material | undefined> {
+    const [updated] = await db
+      .update(materials)
+      .set(fields)
       .where(eq(materials.id, id))
       .returning();
     return updated || undefined;

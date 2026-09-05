@@ -1,0 +1,1 @@
+ALTER TABLE "materials" ADD COLUMN "attention_dismissed" boolean DEFAULT false NOT NULL;

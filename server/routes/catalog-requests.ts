@@ -17,6 +17,13 @@ import { ZodError } from "zod";
 
 // Maps each entity type to its payload validator and the storage method that
 // actually creates the real catalog entry once a request is approved.
+//
+// `material` approval creates a Global Catalog Material (createMaterial leaves
+// user_id NULL). That is deliberate: a curated global PETG with a real density
+// is worth requesting even though the user could declare one privately.
+// Promoting an existing Personal Catalog entry into the Global Catalog is not
+// built - see the last consequence in
+// docs/adr/0003-per-user-material-catalog.md.
 const ENTITY_CONFIG = {
   manufacturer: { schema: insertManufacturerSchema, create: (data: any) => storage.createManufacturer(data), label: (p: any) => p.name },
   material: { schema: insertMaterialSchema, create: (data: any) => storage.createMaterial(data), label: (p: any) => p.name },

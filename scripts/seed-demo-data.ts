@@ -20,7 +20,6 @@ import {
   filamentTypes,
   filaments,
   manufacturers,
-  materials,
   colors,
   diameters,
   storageLocations,
@@ -76,12 +75,18 @@ async function seed() {
     { name: "Overture", sortOrder: 3 },
   ]);
 
-  const catalogMaterials = await tx.insert(materials).values([
-    { name: "PLA", sortOrder: 1, density: "1.24", isHygroscopic: false },
-    { name: "PETG", sortOrder: 2, density: "1.27", isHygroscopic: true },
-    { name: "ABS", sortOrder: 3, density: "1.04", isHygroscopic: true },
-    { name: "TPU", sortOrder: 4, density: "1.21", isHygroscopic: true },
-  ]).returning();
+  // Raw SQL, not tx.insert: verify-upgrade.ts runs this script against a
+  // pre-migration database to snapshot what an existing install would lose, and
+  // drizzle spells every insert with the full column list - it would reference
+  // materials.user_id before the migration that adds it has run.
+  const catalogMaterials = (await tx.execute(sql`
+    INSERT INTO materials (name, sort_order, density, is_hygroscopic) VALUES
+      ('PLA', 1, 1.24, false),
+      ('PETG', 2, 1.27, true),
+      ('ABS', 3, 1.04, true),
+      ('TPU', 4, 1.21, true)
+    RETURNING id, name
+  `)).rows as Array<{ id: number; name: string }>;
   const petg = catalogMaterials.find((m) => m.name === "PETG")!;
 
   await tx.insert(colors).values([

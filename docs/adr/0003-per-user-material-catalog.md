@@ -69,6 +69,27 @@ uniqueness must agree with it, both go through `eqIgnoreCase` in
 `server/db/predicates.ts` rather than spelling out caseless comparison a third
 time.
 
+**A name can exist in both catalogs at once, so every lookup is
+Personal-before-Global.** The two partial unique indexes are disjoint, so
+`(NULL, 'PLA-CF')` and `(alice, 'PLA-CF')` coexist - and they will, whenever an
+admin approves a Catalog Request for a name a user has already auto-registered.
+That is allowed on purpose: blocking the approval would let one user's typo veto
+a shared addition, and collapsing the rows would discard whatever they had
+filled in. The cost is that every read has to break the tie the same way, or the
+two disagree - `resolveMaterial` returning the user's own row while the
+drying-reminder check reads the global row's flag means unchecking "hygroscopic"
+on your own row does nothing, with nothing in the UI explaining why. So
+`storage.getHygroscopicMaterialNames` applies the same precedence rather than
+flattening both catalogs into one name set.
+
+**Surrounding whitespace is not part of a material's name.** Resolution trims
+before it compares (`catalogName` in `server/utils/materials.ts`), because the
+indexes cannot help here: `lower(' PETG')` genuinely differs from `lower('PETG')`,
+so without trimming a trailing space out of a CSV column would register a second
+Personal Catalog row that looks identical to the first and silently loses the
+curated density and hygroscopic flag - the exact failure this ADR exists to
+eliminate.
+
 **Promotion is not built.** A user cannot yet ask for their Personal Catalog
 Material to be moved into the Global Catalog; the existing Catalog Request flow
 still works and is unchanged, so the path is open, just manual. Worth revisiting

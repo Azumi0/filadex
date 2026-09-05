@@ -24,6 +24,17 @@ export function eqIgnoreCase(column: AnyPgColumn, value: string): SQL {
 }
 
 /**
+ * The same rule as {@link eqIgnoreCase}, for two values already in hand rather
+ * than in SQL. It lives here so the one place the caseless-comparison rule is
+ * defined also covers the JS side: `isInUse` for materials compares a declared
+ * material against a Catalog Material name and has to agree with how the two
+ * resolve in the database.
+ */
+export function equalsIgnoreCase(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+/**
  * Matches when the column contains the value anywhere in it, ignoring case.
  *
  * `%`, `_` and `\` in the value are escaped rather than stripped, so a search
