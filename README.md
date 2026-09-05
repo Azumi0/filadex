@@ -119,6 +119,10 @@ Choose between PostgreSQL (multi-user default) and SQLite (single-user). Note th
 Database files and backups are persisted inside the `filadex_data` volume: the database at `/data/filadex.db` and scheduled snapshots in `/data/backups` (override with `BACKUP_DIR`). SQLite runs with write-ahead logging (WAL), producing `-wal` and `-shm` files beside the database, which is why external backups should copy the entire `/data` directory rather than copying a single `.db` file.
 
 The application will be available at http://localhost:8080.
+ 
+#### Variant C: Synology NAS (Container Manager with SQLite)
+
+For a complete step-by-step guide on deploying Filadex on a Synology NAS using Container Manager, HTTPS reverse proxy, automated SQLite backups, and persistent storage, see [`docs/deployment-synology.md`](docs/deployment-synology.md) and [`docker-compose.synology.yml`](docker-compose.synology.yml).
 
 ## 🔧 Configuration
 
